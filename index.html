@@ -214,14 +214,13 @@ function processCSV(text) {
   }
   // Compute smart scores post-loop (needs global max values)
   const gmvMax=Math.max(...activeList.map(x=>x.gmv),1);
-  const contentMax=Math.max(...activeList.map(x=>(x.lives||0)+(x.videosContent||0)),1);
-  const effMax=Math.max(...activeList.map(x=>{const c=(x.lives||0)+(x.videosContent||0);return c>0?x.gmv/c:0;}),1);
+  const livesMax=Math.max(...activeList.map(x=>x.lives||0),1);
   
   // Re-segment and re-count with smart scores
   Object.keys(segCounts).forEach(k=>{segCounts[k]=0;segGMV[k]=0;});
   activeList.forEach(a=>{
-    a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,contentMax,effMax);
-    a.seg=isLivesSheet?segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent):a.seg;
+    a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);
+    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent);
     a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
@@ -246,13 +245,16 @@ const SEG_TOOLTIPS = {
   lost:     "Sem GMV e sem atividade. Fora da gestão ativa por ora.",
 };
 
-function calcScore(gmv, lives, videos, gmvMax, contentMax, effMax) {
-  const content = (lives||0) + (videos||0);
-  const gmvScore   = gmvMax>0 ? (gmv/gmvMax)*100 : 0;
-  const contScore  = contentMax>0 ? (content/contentMax)*100 : 0;
-  const eff        = content>0 ? gmv/content : 0;
-  const effScore   = effMax>0 ? (eff/effMax)*100 : 0;
-  return Math.round(gmvScore*0.40 + contScore*0.25 + effScore*0.35);
+function calcScore(gmv, lives, videosContent, gmvMax, livesMax) {
+  // videosContent = GMV de vídeos shoppable (R$), não contagem de vídeos
+  // Score: GMV é o principal driver (75%) + bônus de atividade (25%)
+  // Afiliadas de live recebem crédito por frequência de lives
+  // Afiliadas de vídeo recebem crédito proporcional ao share de GMV via vídeos
+  const gmvScore  = gmvMax>0 ? (gmv/gmvMax)*100 : 0;
+  const liveScore = livesMax>0 ? (Math.min(lives||0,livesMax)/livesMax)*100 : 0;
+  const videoShare= gmv>0 ? Math.min((videosContent||0)/gmv,1) : 0;
+  const actScore  = Math.max(liveScore, videoShare*100);
+  return Math.round(gmvScore*0.75 + actScore*0.25);
 }
 
 function segmentarScore(score, gmv, followers, lives, videos) {
@@ -421,7 +423,7 @@ function AfiliadaPanel({a,onClose}){
             <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#94a3b8"}}>✕</button>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginTop:20}}>
-            {[["GMV",fmtBRL(a.gmv),"#7c3aed"],["Lives",fmtNum(a.lives),"#059669"],["Vídeos",fmtNum(a.videosContent||0),"#0891b2"],["Score",`${a.score||0}/100`,"#7c3aed"]].map(([l,v,c])=>(
+            {[["GMV",fmtBRL(a.gmv),"#7c3aed"],["Lives",fmtNum(a.lives),"#059669"],["GMV Vid.",a.videosContent>0?fmtBRL(a.videosContent):"—","#0891b2"],["Score",`${a.score||0}/100`,"#7c3aed"]].map(([l,v,c])=>(
               <div key={l} style={{background:"#fff",borderRadius:10,padding:12,textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>{l}</div></div>
             ))}
           </div>
@@ -435,7 +437,7 @@ function AfiliadaPanel({a,onClose}){
           {tab==="evolucao"&&<EvolucaoTab a={a}/>}
           {tab==="overview"&&(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
-              {[["GMV Total",fmtBRL(a.gmv),"💰"],["GMV Live",fmtBRL(a.gmvLive),"📡"],["Pedidos",fmtNum(a.orders),"🛒"],["Comissão",fmtBRL(a.commission),"💸"],["Lives",a.lives,"🔴"],["Vídeos Produto",a.videosContent||0,"🎬"],["Seguidores",fmtNum(a.followers)||"—","👥"],["Score IA",a.score!=null?(a.score+"/100"):"—","🤖"]].map(([l,v,e])=>(
+              {[["GMV Total",fmtBRL(a.gmv),"💰"],["GMV Live",fmtBRL(a.gmvLive),"📡"],["Pedidos",fmtNum(a.orders),"🛒"],["Comissão",fmtBRL(a.commission),"💸"],["Lives",a.lives,"🔴"],["GMV Vídeo",a.videosContent>0?fmtBRL(a.videosContent):"—","🎬"],["Seguidores",fmtNum(a.followers)||"—","👥"],["Score IA",a.score!=null?(a.score+"/100"):"—","🤖"]].map(([l,v,e])=>(
                 <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",background:"#f8fafc",borderRadius:10}}>
                   <span style={{fontSize:13,color:"#64748b"}}>{e} {l}</span><span style={{fontSize:14,fontWeight:700,color:"#0f172a"}}>{v}</span>
                 </div>
@@ -546,7 +548,7 @@ function Afiliadas({data,onSelect}){
       <div style={{background:"#fff",borderRadius:14,border:"1px solid #f1f5f9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#f8fafc"}}>
-            {["Afiliada","Segmento","Score","GMV","Lives","Vídeos","Ação"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:h==="Ação"?"center":"left",fontWeight:600,color:"#64748b",fontSize:12}}>{h}</th>)}
+            {["Afiliada","Segmento","Score","GMV","Lives","GMV Vídeo","Ação"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:h==="Ação"?"center":"left",fontWeight:600,color:"#64748b",fontSize:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.slice(0,100).map((a,i)=>(
@@ -562,7 +564,7 @@ function Afiliadas({data,onSelect}){
                 <td style={{padding:"12px 16px"}}><span style={{background:"#f1f5f9",borderRadius:8,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#7c3aed"}}>{a.score||0}</span></td>
                 <td style={{padding:"12px 16px",fontWeight:700,color:"#7c3aed"}}>{fmtBRL(a.gmv)}</td>
                 <td style={{padding:"12px 16px",color:"#334155"}}>{a.lives||0}</td>
-                <td style={{padding:"12px 16px",color:"#0891b2",fontWeight:600}}>{a.videosContent||0}</td>
+                <td style={{padding:"12px 16px",color:"#0891b2",fontWeight:600,fontSize:12}}>{a.videosContent>0?fmtBRL(a.videosContent):"—"}</td>
                 <td style={{padding:"12px 16px",textAlign:"center"}}><button onClick={e=>{e.stopPropagation();onSelect(a);}} style={{background:"#ede9fe",color:"#7c3aed",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Ver →</button></td>
               </tr>
             ))}
