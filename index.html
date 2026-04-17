@@ -240,8 +240,7 @@ function processCSV(text) {
 
 // ─── MULTI-MONTH PARSER ───────────────────────────────────────────────────────
 function parseMonthCSV(text) {
-  const lines = text.replace(/
-/g,"").split("\n").filter(l=>l.trim());
+  const lines = text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
   if(lines.length<2) return {};
   const headers = parseCSVLine(lines[0]);
   const hn = headers.map(s=>(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""));
