@@ -161,7 +161,7 @@ function processCSV(text) {
     gmvIdx      = fi(["gmv desde comunicacao","gmv desde"]);
     livesIdx    = fi(["lives desde comunicacao","lives desde"]);
     gmvLiveIdx  = livesIdx;
-    followersIdx= -1; videosIdx=-1; commIdx=-1; ordersIdx=-1;
+    followersIdx= -1; videosIdx=fi(["videos com produtos","shoppable video","video de produto"]); commIdx=-1; ordersIdx=-1;
     if(gmvIdx<0) gmvIdx=80;
     if(livesIdx<0) livesIdx=81;
   } else {
@@ -208,11 +208,86 @@ function processCSV(text) {
     segGMV[seg]=(segGMV[seg]||0)+gmv;
     totalGMV+=gmv; totalOrders+=orders; totalAffiliates++;
     if(seg!=="lost"&&seg!=="inactive"){
-      activeList.push({id:i,handle,avatar:initials(handle),followers,gmv,gmvLive,gmvVideo,orders,lives,videos,commission:comm,ctr:0,seg,tags:autoTags({followers,gmv,gmvLive,gmvVideo,lives,videos}),vids:[],dailyGMV,dailyLives});
+      const videosContent=videosIdx>=0?toFloat(cols[videosIdx]):0;
+      activeList.push({id:i,handle,avatar:initials(handle),followers,gmv,gmvLive,gmvVideo,orders,lives,videosContent,videos,commission:comm,ctr:0,seg,tags:[],vids:[],dailyGMV,dailyLives,score:0});
     }
   }
+  // Compute smart scores post-loop (needs global max values)
+  const gmvMax=Math.max(...activeList.map(x=>x.gmv),1);
+  const contentMax=Math.max(...activeList.map(x=>(x.lives||0)+(x.videosContent||0)),1);
+  const effMax=Math.max(...activeList.map(x=>{const c=(x.lives||0)+(x.videosContent||0);return c>0?x.gmv/c:0;}),1);
+  
+  // Re-segment and re-count with smart scores
+  Object.keys(segCounts).forEach(k=>{segCounts[k]=0;segGMV[k]=0;});
+  activeList.forEach(a=>{
+    a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,contentMax,effMax);
+    a.seg=isLivesSheet?segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent):a.seg;
+    a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent});
+    segCounts[a.seg]=(segCounts[a.seg]||0)+1;
+    segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
+  });
+
   activeList.sort((a,b)=>b.gmv-a.gmv);
   return {segCounts,segGMV,totalGMV:Math.round(totalGMV*100)/100,totalOrders,totalAffiliates,activeList:activeList.slice(0,300)};
+}
+
+
+// ─── SCORING INTELIGENTE ─────────────────────────────────────────────────────
+const SEG_TOOLTIPS = {
+  top:      "Score 75-100 · GMV alto + conteúdo consistente + excelente GMV/conteúdo. Prioridade máxima da gestão.",
+  highval:  "Score 55-74 · GMV sólido com boa produção. A um passo do Top — acelere com incentivos exclusivos.",
+  reliable: "Score 35-54 · Constante e confiável. Aumente frequência de conteúdo para subir de nível.",
+  highpot:  "Grande audiência (200k+ seguidores) com baixa conversão. Alto potencial inexplorado — apoie com estratégia de conteúdo.",
+  promising:"Score 20-34 e ativa. Crescendo. Missões simples e primeiro incentivo para decolar.",
+  support:  "GMV positivo mas abaixo do potencial. Intervenção humana pode recuperar a performance.",
+  new:      "Recém chegada ou primeiros conteúdos. Foco em onboarding e primeira venda.",
+  atrisk:   "Grande audiência mas sem conversão recente. Risco de abandono — reengaje urgente.",
+  inactive: "Sem atividade no período. Candidata a campanha de reativação automática (bot).",
+  lost:     "Sem GMV e sem atividade. Fora da gestão ativa por ora.",
+};
+
+function calcScore(gmv, lives, videos, gmvMax, contentMax, effMax) {
+  const content = (lives||0) + (videos||0);
+  const gmvScore   = gmvMax>0 ? (gmv/gmvMax)*100 : 0;
+  const contScore  = contentMax>0 ? (content/contentMax)*100 : 0;
+  const eff        = content>0 ? gmv/content : 0;
+  const effScore   = effMax>0 ? (eff/effMax)*100 : 0;
+  return Math.round(gmvScore*0.40 + contScore*0.25 + effScore*0.35);
+}
+
+function segmentarScore(score, gmv, followers, lives, videos) {
+  const content=(lives||0)+(videos||0);
+  const active=content>0;
+  if(score>=75) return "top";
+  if(score>=55) return "highval";
+  if(score>=35) return "reliable";
+  if(followers>=200000&&score<35) return "highpot";
+  if(score>=20&&active) return "promising";
+  if(gmv>0&&active&&score<20) return "support";
+  if(gmv===0&&active&&followers>=50000) return "atrisk";
+  if(active) return "new";
+  if(followers>=10000) return "inactive";
+  return "lost";
+}
+
+
+// ─── TOOLTIP ─────────────────────────────────────────────────────────────────
+function Tooltip({children, text, width=240}){
+  const [show,setShow]=useState(false);
+  return(
+    <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}
+      onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+      {children}
+      {show&&<div style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",transform:"translateX(-50%)",
+        background:"#0f172a",color:"#fff",padding:"10px 14px",borderRadius:10,fontSize:11,
+        width:`${width}px`,lineHeight:1.6,zIndex:9999,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",
+        pointerEvents:"none",whiteSpace:"normal"}}>
+        {text}
+        <div style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",
+          borderTop:"5px solid #0f172a",borderLeft:"5px solid transparent",borderRight:"5px solid transparent"}}/>
+      </div>}
+    </span>
+  );
 }
 
 // ─── UI COMPONENTS ────────────────────────────────────────────────────────────
@@ -339,14 +414,14 @@ function AfiliadaPanel({a,onClose}){
               </a>
             </div>
               <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
-                <span style={{background:si.bg,color:si.cor,fontWeight:700,fontSize:11,padding:"2px 10px",borderRadius:20,border:`1px solid ${si.cor}40`}}>{si.nome}</span>
+                <Tooltip text={SEG_TOOLTIPS[a.seg]||si.nome} width={260}><span style={{background:si.bg,color:si.cor,fontWeight:700,fontSize:11,padding:"2px 10px",borderRadius:20,border:`1px solid ${si.cor}40`,cursor:"help"}}>{si.nome}</span></Tooltip>
                 {(a.tags||[]).map(t=><span key={t} style={{background:"#f1f5f9",color:"#475569",fontSize:11,padding:"2px 8px",borderRadius:20}}>{t}</span>)}
               </div></div>
             </div>
             <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#94a3b8"}}>✕</button>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginTop:20}}>
-            {[["GMV",fmtBRL(a.gmv),"#7c3aed"],["Pedidos",fmtNum(a.orders),"#2563eb"],["Lives",fmtNum(a.lives),"#059669"]].map(([l,v,c])=>(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginTop:20}}>
+            {[["GMV",fmtBRL(a.gmv),"#7c3aed"],["Lives",fmtNum(a.lives),"#059669"],["Vídeos",fmtNum(a.videosContent||0),"#0891b2"],["Score",`${a.score||0}/100`,"#7c3aed"]].map(([l,v,c])=>(
               <div key={l} style={{background:"#fff",borderRadius:10,padding:12,textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>{l}</div></div>
             ))}
           </div>
@@ -360,7 +435,7 @@ function AfiliadaPanel({a,onClose}){
           {tab==="evolucao"&&<EvolucaoTab a={a}/>}
           {tab==="overview"&&(
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
-              {[["GMV Total",fmtBRL(a.gmv),"💰"],["GMV Live",fmtBRL(a.gmvLive),"📡"],["Pedidos",fmtNum(a.orders),"🛒"],["Comissão",fmtBRL(a.commission),"💸"],["Lives",a.lives,"🔴"],["Seguidores",fmtNum(a.followers)||"—","👥"]].map(([l,v,e])=>(
+              {[["GMV Total",fmtBRL(a.gmv),"💰"],["GMV Live",fmtBRL(a.gmvLive),"📡"],["Pedidos",fmtNum(a.orders),"🛒"],["Comissão",fmtBRL(a.commission),"💸"],["Lives",a.lives,"🔴"],["Vídeos Produto",a.videosContent||0,"🎬"],["Seguidores",fmtNum(a.followers)||"—","👥"],["Score IA",a.score!=null?(a.score+"/100"):"—","🤖"]].map(([l,v,e])=>(
                 <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",background:"#f8fafc",borderRadius:10}}>
                   <span style={{fontSize:13,color:"#64748b"}}>{e} {l}</span><span style={{fontSize:14,fontWeight:700,color:"#0f172a"}}>{v}</span>
                 </div>
@@ -429,7 +504,7 @@ function Dashboard({setPage,data,liveStatus,onSelect}){
             <div key={a.id} onClick={()=>onSelect(a)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<4?"1px solid #f8fafc":"none",cursor:"pointer",borderRadius:8,transition:"background 0.1s"}} onMouseEnter={e=>e.currentTarget.style.background="#f8fafc"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{fontWeight:800,fontSize:13,color:"#94a3b8",width:20,textAlign:"center"}}>{i+1}</div>
               <Avatar initials={a.avatar} size={8}/>
-              <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:13,color:"#7c3aed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"underline"}}>@{a.handle}</div><span style={{background:segBg(a.seg),color:segCor(a.seg),fontSize:10,padding:"1px 7px",borderRadius:20,fontWeight:600}}>{segInfo(a.seg).nome}</span></div>
+              <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:13,color:"#7c3aed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:"underline"}}>@{a.handle}</div><Tooltip text={SEG_TOOLTIPS[a.seg]||""} width={260}><span style={{background:segBg(a.seg),color:segCor(a.seg),fontSize:10,padding:"1px 7px",borderRadius:20,fontWeight:600,cursor:"help"}}>{segInfo(a.seg).nome}</span></Tooltip></div>
               <div style={{fontWeight:700,fontSize:13,color:"#7c3aed"}}>{fmtBRL(a.gmv)}</div>
             </div>
           ))}
@@ -471,7 +546,7 @@ function Afiliadas({data,onSelect}){
       <div style={{background:"#fff",borderRadius:14,border:"1px solid #f1f5f9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#f8fafc"}}>
-            {["Afiliada","Segmento","GMV","Lives","Ação"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:h==="Ação"?"center":"left",fontWeight:600,color:"#64748b",fontSize:12}}>{h}</th>)}
+            {["Afiliada","Segmento","Score","GMV","Lives","Vídeos","Ação"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:h==="Ação"?"center":"left",fontWeight:600,color:"#64748b",fontSize:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
             {filtered.slice(0,100).map((a,i)=>(
@@ -483,9 +558,11 @@ function Afiliadas({data,onSelect}){
                     <div style={{display:"flex",gap:4,marginTop:3}}>{(a.tags||[]).slice(0,2).map(t=><span key={t} style={{background:"#f1f5f9",color:"#64748b",fontSize:10,padding:"1px 6px",borderRadius:10}}>{t}</span>)}</div></div>
                   </div>
                 </td>
-                <td style={{padding:"12px 16px"}}><span style={{background:segBg(a.seg),color:segCor(a.seg),fontWeight:600,fontSize:11,padding:"3px 10px",borderRadius:20}}>{segInfo(a.seg).nome}</span></td>
+                <td style={{padding:"12px 16px"}}><Tooltip text={SEG_TOOLTIPS[a.seg]||""} width={260}><span style={{background:segBg(a.seg),color:segCor(a.seg),fontWeight:600,fontSize:11,padding:"3px 10px",borderRadius:20,cursor:"help"}}>{segInfo(a.seg).nome}</span></Tooltip></td>
+                <td style={{padding:"12px 16px"}}><span style={{background:"#f1f5f9",borderRadius:8,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#7c3aed"}}>{a.score||0}</span></td>
                 <td style={{padding:"12px 16px",fontWeight:700,color:"#7c3aed"}}>{fmtBRL(a.gmv)}</td>
                 <td style={{padding:"12px 16px",color:"#334155"}}>{a.lives||0}</td>
+                <td style={{padding:"12px 16px",color:"#0891b2",fontWeight:600}}>{a.videosContent||0}</td>
                 <td style={{padding:"12px 16px",textAlign:"center"}}><button onClick={e=>{e.stopPropagation();onSelect(a);}} style={{background:"#ede9fe",color:"#7c3aed",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Ver →</button></td>
               </tr>
             ))}
