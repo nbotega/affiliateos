@@ -123,14 +123,44 @@ function initials(handle) {
   return handle.slice(0,2).toUpperCase();
 }
 
+function findCol(headers, keywords) {
+  const h = headers.map(s=>(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""));
+  for(const kw of keywords){
+    const idx = h.findIndex(s=>s.includes(kw));
+    if(idx>=0) return idx;
+  }
+  return -1;
+}
+
 function processCSV(text) {
-  const lines = text.split("\n").filter(l=>l.trim());
+  const lines = text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
   if(lines.length<2) throw new Error("CSV vazio");
 
-  // Col indices (based on TikTok Shop export format)
-  // 0: handle, 1: gmv, 2: gmvLive, 3: gmvVideo, 7: comissao, 9: ticketMedio
-  // 11: orders, 12: ctr, 15: lives, 16: videos, 23: followers
-  const IDX = { handle:0, gmv:1, gmvLive:2, gmvVideo:3, comm:7, ticket:9, orders:11, ctr:12, lives:15, videos:16, followers:23 };
+  // Detecta colunas pelos nomes (robusto a qualquer ordem)
+  const headers = parseCSVLine(lines[0]);
+  const IDX = {
+    handle:   findCol(headers, ["nome do criador","creator name","handle","username"]),
+    gmv:      findCol(headers, ["valor bruto da mercadoria (gmv) de afiliados","gmv de afiliado","affiliate gmv","gross merchandise"]),
+    gmvLive:  findCol(headers, ["gmv de live","live gmv","gmv live"]),
+    gmvVideo: findCol(headers, ["gmv de video","video gmv","gmv de vid"]),
+    comm:     findCol(headers, ["comissao estimada","estimated commission","commission"]),
+    orders:   findCol(headers, ["pedidos de afiliados","affiliate orders","orders"]),
+    ctr:      findCol(headers, ["taxa de cliques","click-through rate","ctr"]),
+    lives:    findCol(headers, ["transmissoes ao vivo","live streams","lives"]),
+    videos:   findCol(headers, ["videos com produtos","shoppable videos","videos"]),
+    followers:findCol(headers, ["seguidores de afiliados","affiliate followers","followers","seguidores"]),
+  };
+  // Fallback para indices fixos
+  if(IDX.handle<0)    IDX.handle=0;
+  if(IDX.gmv<0)       IDX.gmv=1;
+  if(IDX.gmvLive<0)   IDX.gmvLive=2;
+  if(IDX.gmvVideo<0)  IDX.gmvVideo=3;
+  if(IDX.comm<0)      IDX.comm=7;
+  if(IDX.orders<0)    IDX.orders=11;
+  if(IDX.ctr<0)       IDX.ctr=12;
+  if(IDX.lives<0)     IDX.lives=15;
+  if(IDX.videos<0)    IDX.videos=16;
+  if(IDX.followers<0) IDX.followers=23;
 
   const segCounts = {};
   const segGMV = {};
@@ -141,7 +171,7 @@ function processCSV(text) {
 
   for(let i=1;i<lines.length;i++){
     const cols = parseCSVLine(lines[i]);
-    if(cols.length<17) continue;
+    if(cols.length<2) continue;
     const handle = (cols[IDX.handle]||"").trim().replace(/^"/,"").replace(/"$/,"");
     if(!handle) continue;
 
