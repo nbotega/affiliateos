@@ -12,6 +12,7 @@
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#f1f5f9}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
 </style>
 </head>
 <body>
@@ -1042,151 +1043,228 @@ function GuiaDeScore(){
 // ─── IA CHAT ────────────────────────────────────────────────────────────────
 function normalizeStr(s){return(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9\s@]/g,"").trim();}
 
+// Monta contexto compacto das afiliadas para enviar à IA real
+function buildContext(data){
+  const list=data.activeList||[];
+  const top20=list.slice(0,20).map(a=>`@${a.handle} seg=${a.seg} score=${a.score||0} gmv=${Math.round(a.gmv)} gmvAcum=${Math.round(a.gmvAcumulado||0)} followers=${a.followers||0} lives=${a.lives||0} orders=${a.orders||0}`).join("\n");
+  const {segCounts,totalGMV,totalOrders,totalAffiliates,gmvAcumuladoTotal}=data;
+  const segs=Object.entries(segCounts).map(([k,v])=>`${k}:${v}`).join(" ");
+  return `=== BASE L'ORÉAL BRASIL TIKTOK SHOP ===
+GMV acumulado: R$${Math.round(gmvAcumuladoTotal||totalGMV).toLocaleString("pt-BR")} | Pedidos: ${totalOrders} | Total afiliadas: ${totalAffiliates}
+Segmentos (contagem): ${segs}
+
+Segmentos: top=Top Performer, highval=Alto Valor, reliable=Confiável, highpot=Alto Potencial (muitos followers, pouco GMV), promising=Promissora, support=Suporte, atrisk=Em Risco, new=Nova, inactive=Inativa, lost=Perdida
+
+Top 20 afiliadas (por GMV):
+${top20}
+
+Afiliadas além das top 20: use os dados de segmento e totais acima para responder.`;
+}
+
+// Chama Gemini Flash diretamente do browser
+async function callGemini(question, data, apiKey){
+  const ctx=buildContext(data);
+  const systemPrompt=`Você é a IA de inteligência de afiliadas da L'Oréal Brasil no TikTok Shop. Responda em português brasileiro, de forma direta e acionável. Use os dados abaixo para embasar suas respostas. Seja específica: cite handles, números, segmentos. Quando sugerir ação, seja concreta (ex: "mande kit de produto", "proponha live exclusiva"). Máximo 200 palavras por resposta.
+
+${ctx}`;
+  const body=JSON.stringify({
+    system_instruction:{parts:[{text:systemPrompt}]},
+    contents:[{role:"user",parts:[{text:question}]}],
+    generationConfig:{temperature:0.7,maxOutputTokens:400}
+  });
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body});
+  if(!res.ok){
+    const err=await res.json().catch(()=>({}));
+    throw new Error(err?.error?.message||`HTTP ${res.status}`);
+  }
+  const json=await res.json();
+  return json?.candidates?.[0]?.content?.parts?.[0]?.text||"Sem resposta da IA.";
+}
+
+// Fallback rule-based robusto
 function queryIA(raw, data){
   const q=normalizeStr(raw);
   const list=data.activeList||[];
   const fmtR=v=>fmtBRL(v);
   const fmtN=v=>fmtNum(v);
 
-  // ── Busca por handle específica ──
-  // Detecta padrões: "o que falo pra X", "quanto X vende", "qual o score de X"
-  const handleMatch=(pattern,text)=>{
-    const m=text.match(pattern);
-    if(!m) return null;
-    const raw=m[1].replace(/^@/,"").trim();
-    return list.find(a=>normalizeStr(a.handle).includes(normalizeStr(raw)));
+  // ── Busca handle específico em qualquer parte do texto ──
+  const findHandle=q=>{
+    const tokens=q.replace(/^@/,"").split(/\s+/);
+    for(const t of tokens){
+      if(t.length<3) continue;
+      const found=list.find(a=>normalizeStr(a.handle).includes(normalizeStr(t)));
+      if(found) return found;
+    }
+    return null;
   };
 
-  // "o que falo pra|para @X" ou "o que falo pra|para X"
-  const falarMatch=q.match(/(?:o que|oque|oq|q[ue]+)\s+(?:falo|falar|falar pra|falar para|falo pra|falo para|digo|mandar|mensagem)[^@\w]*(?:pra|para|pro|p[a]?)\s+@?(\S+)/);
+  // "o que falo pra|para X" / "como abordar X" / "mensagem pra X"
+  const falarPat=/(?:o que|oque|oq)\s+(?:falo|falar|digo|mando|mandar)\s+(?:pra|para|pro|p)\s+@?(\S+)|(?:como|que)\s+(?:abordar|falar com|mensagem para?|abordagem)\s+@?(\S+)|(?:pitch|script|dm)\s+(?:pra|para|pro)\s+@?(\S+)/;
+  const falarMatch=q.match(falarPat);
   if(falarMatch){
-    const rawH=falarMatch[1].replace(/^@/,"");
-    const a=list.find(x=>normalizeStr(x.handle).includes(normalizeStr(rawH)));
+    const rawH=(falarMatch[1]||falarMatch[2]||falarMatch[3]||"").replace(/^@/,"");
+    const a=list.find(x=>normalizeStr(x.handle).includes(normalizeStr(rawH)))||findHandle(q);
     if(a){
-      const s=segInfo(a.seg);
       const gmvFmt=fmtR(a.gmv);
       const gmvAcum=a.gmvAcumulado>0?fmtR(a.gmvAcumulado):null;
       const mths=a.dailyGMV?a.dailyGMV.filter(m=>m.v>0):[];
       const bestMth=mths.length>0?mths.reduce((b,m)=>m.v>b.v?m:b,mths[0]):null;
-      let pitch="";
-      if(a.seg==="top")           pitch=`Reconheça a performance! @${a.handle} está entre as melhores afiliadas. Ofereça acesso antecipado a lançamentos e negocie campanhas exclusivas. GMV: ${gmvFmt}.`;
-      else if(a.seg==="highval")  pitch=`Alta frequência, bom GMV. Proponha um acordo de exclusividade ou comissão maior por meta. GMV atual: ${gmvFmt}. Mostre que você valoriza a consistência.`;
-      else if(a.seg==="reliable") pitch=`Afiliada confiável e estável. Convide para um desafio de GMV com bonificação. Potencial para subir de segmento. GMV: ${gmvFmt}.`;
-      else if(a.seg==="highpot")  pitch=`${fmtN(a.followers)} seguidores e ainda pouco GMV — a audiência está lá. Apresente o programa, mande kit de produto para testar ao vivo ou gravar vídeo. Essa pode explodir.`;
-      else if(a.seg==="promising")pitch=`Recém ativa, mostrando tração. Ofereça suporte de conteúdo: briefing de vídeo, hashtags, ideia de gancho. GMV: ${gmvFmt}. Não deixe esfriar.`;
-      else if(a.seg==="support")  pitch=`Vende, mas abaixo do potencial. Pergunte o que trava: produto, comissão, suporte técnico? Ofereça live combo ou desafio de 7 dias.`;
-      else if(a.seg==="atrisk")   pitch=`Tinha audiência mas parou de publicar. Reaqueça com novidade: produto novo, campanha relâmpago, desafio. ${a.followers>0?`Ainda tem ${fmtN(a.followers)} seguidores.`:""}`;
-      else if(a.seg==="new")      pitch=`Afiliada nova, ainda se ambientando. Mande material de onboarding, exemplos de vídeos que convertem bem e um produto para testar. Dê atenção agora para engajar.`;
-      else if(a.seg==="inactive") pitch=`Inativa — sem publicações recentes. Mensagem leve de re-engajamento: campanha nova, oferta de produto, relink. Não force.`;
-      else                        pitch=`Afiliada em segmento "${s.nome}". Avalie se faz sentido investir esforço agora ou colocar no fluxo de automação.`;
-      const timeline=bestMth?` Melhor mês dela foi ${bestMth.label} com ${fmtR(bestMth.v)}.`:"";
-      return `**@${a.handle}** · ${s.nome} · Score ${a.score||"—"}/100\n\n${pitch}${gmvAcum?`\n\nGMV acumulado: ${gmvAcum}.`:""}${timeline}`;
+      const pitches={
+        top:`Reconheça a performance! Ofereça acesso antecipado a lançamentos e negocie campanha exclusiva. GMV: ${gmvFmt}.`,
+        highval:`Alta frequência, bom GMV. Proponha exclusividade ou comissão maior por meta. Mostre que valoriza a consistência. GMV: ${gmvFmt}.`,
+        reliable:`Confiável e estável. Convide para desafio de GMV com bonificação — potencial real de subir de segmento. GMV: ${gmvFmt}.`,
+        highpot:`${fmtN(a.followers)} seguidores e pouco GMV ainda — a audiência está lá. Mande kit de produto para testar ao vivo ou gravar vídeo. Essa pode explodir.`,
+        promising:`Mostrando tração. Ofereça suporte de conteúdo: briefing de vídeo, hashtags, ideia de gancho. Não deixe esfriar. GMV: ${gmvFmt}.`,
+        support:`Vende mas abaixo do potencial. Pergunte o que trava: produto, comissão, suporte técnico? Proponha live combo ou desafio de 7 dias.`,
+        atrisk:`Tinha audiência mas parou. Reaqueça com novidade: produto novo, campanha relâmpago. ${a.followers>0?`Ainda tem ${fmtN(a.followers)} seguidores.`:""}`,
+        new:`Afiliada nova. Mande onboarding, exemplos de vídeos que convertem e um produto para testar. Atenção agora converte mais tarde.`,
+        inactive:`Inativa. Mensagem leve de re-engajamento com campanha nova ou oferta de produto. Não force.`,
+      };
+      const pitch=pitches[a.seg]||`Segmento ${a.seg}. Avalie se vale investir esforço agora.`;
+      const timeline=bestMth?`\nMelhor mês: ${bestMth.label} → ${fmtR(bestMth.v)}.`:"";
+      return `**@${a.handle}** · ${segInfo(a.seg).nome} · Score ${a.score||"—"}/100\n\n${pitch}${gmvAcum?`\nGMV acumulado: ${gmvAcum}.`:""}${timeline}`;
     }
-    return `Não encontrei @${rawH} na base. Verifique o handle ou aguarde a próxima sincronização com a planilha.`;
   }
 
-  // "quanto X vende" / "gmv de X" / "resultado de X"
-  const vendaMatch=q.match(/(?:quanto|qual(?:o|o gmv)?|gmv de|resultado de|numeros de)\s+(?:a\s+)?@?(\S+)\s+(?:vende?|faz|faturou?|gerou?|teve?)?/)||
-                   q.match(/@(\S+)\s+(?:vende?|faz|fatura|gerou)/);
+  // "quanto X vende" / "gmv de X" / "resultado de X" / "numeros de X"
+  const vendaPat=/(?:quanto|qual o gmv|gmv de|resultado de|numeros de|performance de)\s+(?:a\s+)?@?(\S+)|@(\S+)\s+(?:vende|faz|faturou|gerou|teve)/;
+  const vendaMatch=q.match(vendaPat);
   if(vendaMatch){
-    const rawH=vendaMatch[1].replace(/^@/,"");
-    const a=list.find(x=>normalizeStr(x.handle).includes(normalizeStr(rawH)));
+    const rawH=(vendaMatch[1]||vendaMatch[2]||"").replace(/^@/,"");
+    const a=list.find(x=>normalizeStr(x.handle).includes(normalizeStr(rawH)))||findHandle(q);
     if(a){
       const mths=a.dailyGMV?a.dailyGMV.filter(m=>m.v>0):[];
       const mthStr=mths.map(m=>`${m.label}: ${fmtR(m.v)}`).join(" · ");
-      const acum=a.gmvAcumulado>0?`\nGMV acumulado (todos os meses): ${fmtR(a.gmvAcumulado)}`:""
-      return `**@${a.handle}** · ${segInfo(a.seg).nome}\n\nGMV (último mês): ${fmtR(a.gmv)}\nPedidos: ${fmtN(a.orders)} · Comissão: ${fmtR(a.commission)}\nScore: ${a.score||"—"}/100${acum}${mths.length>1?`\n\nEvolução: ${mthStr}`:""}`;
+      return `**@${a.handle}** · ${segInfo(a.seg).nome}\n\nGMV último mês: ${fmtR(a.gmv)}\nPedidos: ${fmtN(a.orders)} · Comissão: ${fmtR(a.commission)}\nScore: ${a.score||"—"}/100${a.gmvAcumulado>0?`\nGMV acumulado: ${fmtR(a.gmvAcumulado)}`:""}${mths.length>1?`\n\nEvolução: ${mthStr}`:""}`;
     }
-    return `Handle @${rawH} não encontrado. Tente com o nome exato da planilha.`;
   }
 
-  // "quem startar campanha" / "quem ativar" / "quem devo investir"
-  if(/startar|ativar|campanha|investir|apostar|abordar|quem ativare?/.test(q)){
+  // Handle encontrado em contexto genérico → mostra perfil completo
+  const handleInQ=findHandle(q);
+  if(handleInQ&&q.length<60){
+    const a=handleInQ;
+    return `**@${a.handle}** · ${segInfo(a.seg).nome} · Score ${a.score||"—"}/100\nGMV: ${fmtR(a.gmv)} · ${fmtN(a.followers)} seguidores · ${a.lives||0} lives`;
+  }
+
+  // Rising star / potencial / quem focar / dar atenção
+  if(/rising star|potencial|focar|foco|dar atencao|dar atençao|atencao|quem crescer|quem apostar|quem investir|descoberta|oculta|escondida|subindo|tração|tracao|emergente/.test(q)){
+    const stars=list.filter(a=>["highpot","promising"].includes(a.seg))
+      .sort((a,b)=>(b.followers||0)-(a.followers||0)).slice(0,6);
+    if(stars.length===0) return "Nenhuma candidata a rising star identificada no momento.";
+    const rows=stars.map(a=>`• @${a.handle} — ${segInfo(a.seg).nome} · ${fmtN(a.followers)} seguidores · GMV ${fmtR(a.gmv)} · Score ${a.score||0}/100`).join("\n");
+    return `**Rising Stars — quem dar atenção agora:**\n\n${rows}\n\nSão afiliadas com audiência relevante ou tração recente, mas ainda com GMV abaixo do teto. O timing de atenção aqui é agora — depois fica mais caro.`;
+  }
+
+  // Campanha / startar / ativar
+  if(/startar|ativar|campanha|lancar|lançar|abordar|contatar|contato|parceria|collab/.test(q)){
     const cands=list.filter(a=>["highpot","promising","reliable"].includes(a.seg))
       .sort((a,b)=>(b.followers||0)-(a.followers||0)).slice(0,5);
     if(cands.length===0) return "Nenhuma afiliada elegível para campanha no momento.";
     const rows=cands.map(a=>`• @${a.handle} — ${segInfo(a.seg).nome} · ${fmtN(a.followers)} seguidores · GMV ${fmtR(a.gmv)}`).join("\n");
-    return `**Top candidatas para campanha agora:**\n\n${rows}\n\nCritério: Alto Potencial, Promissoras e Confiáveis com mais audiência. São as que têm base de seguidores mas ainda têm espaço para crescer GMV.`;
+    return `**Top candidatas para campanha:**\n\n${rows}\n\nCritério: Alto Potencial + Promissoras + Confiáveis com maior audiência. Têm base para converter — mas precisam de ativação.`;
   }
 
-  // "quem são as top" / "melhores afiliadas" / "ranking"
-  if(/top performer|melhores|top afiliada|ranking|quem mais vende|maior gmv/.test(q)){
-    const tops=list.filter(a=>a.seg==="top").slice(0,5);
-    if(tops.length===0) return "Nenhuma afiliada Top Performer no momento.";
+  // Top performers / melhores / ranking / quem mais vende
+  if(/top performer|melhores|top afiliada|ranking|quem mais vende|maior gmv|lider|líder/.test(q)){
+    const tops=list.filter(a=>a.seg==="top").slice(0,6);
+    if(tops.length===0) return "Nenhuma Top Performer carregada.";
     const rows=tops.map((a,i)=>`${i+1}. @${a.handle} — GMV ${fmtR(a.gmv)} · Score ${a.score||"—"}/100`).join("\n");
     return `**Top Performers:**\n\n${rows}`;
   }
 
-  // "quem está em risco" / "em risco" / "perdendo"
-  if(/em risco|atrisk|perdendo|caindo|risco/.test(q)){
+  // Em risco / pararam / sumiu / sumindo
+  if(/em risco|atrisk|perdendo|caindo|risco|parou|pararam|sumiu|sumindo|desapareceu/.test(q)){
     const at=list.filter(a=>a.seg==="atrisk").slice(0,5);
-    if(at.length===0) return "Nenhuma afiliada em estado 'Em Risco' com dados carregados.";
+    if(at.length===0) return "Nenhuma afiliada Em Risco identificada.";
     const rows=at.map(a=>`• @${a.handle} — ${fmtN(a.followers)} seguidores · Sem publicações recentes`).join("\n");
-    return `**Afiliadas em Risco (tinham audiência, pararam de publicar):**\n\n${rows}\n\nAção recomendada: mensagem de re-engajamento com novidade de produto.`;
+    return `**Em Risco (audiência ativa, GMV parado):**\n\n${rows}\n\nAção: mensagem de re-engajamento com produto novo ou campanha relâmpago. Janela de resgate pequena.`;
   }
 
-  // "quem precisa de suporte" / "suporte" / "underperform"
-  if(/suporte|apoio|ajuda|underperform|abaixo do potencial/.test(q)){
+  // Suporte / underperform / abaixo
+  if(/suporte|apoio|ajuda|underperform|abaixo|dificuldade/.test(q)){
     const sup=list.filter(a=>a.seg==="support").slice(0,5);
-    if(sup.length===0) return "Nenhuma afiliada no segmento Suporte no momento.";
+    if(sup.length===0) return "Nenhuma afiliada no segmento Suporte.";
     const rows=sup.map(a=>`• @${a.handle} — GMV ${fmtR(a.gmv)} · Score ${a.score||"—"}/100`).join("\n");
-    return `**Afiliadas que precisam de Suporte:**\n\n${rows}\n\nEstas vendem, mas abaixo do potencial. Identifique o gargalo: produto, comissão ou frequência de publicação.`;
+    return `**Precisam de Suporte:**\n\n${rows}\n\nVendem mas abaixo do potencial. Identifique o gargalo: produto, comissão, frequência de publicação.`;
   }
 
-  // "resumo" / "panorama" / "overview" / "como está"
-  if(/resumo|panorama|overview|como esta|situacao|status geral|total/.test(q)){
+  // Resumo / panorama / overview / status
+  if(/resumo|panorama|overview|como esta|situacao|status|total|base toda|visao geral/.test(q)){
     const {segCounts,totalGMV,totalOrders,totalAffiliates,gmvAcumuladoTotal}=data;
-    const tops=segCounts.top||0,hv=segCounts.highval||0,rel=segCounts.reliable||0;
     const acum=gmvAcumuladoTotal||totalGMV;
-    return `**Panorama geral da base:**\n\n💰 GMV acumulado: ${fmtR(acum)}\n🛒 Pedidos: ${fmtN(totalOrders)}\n👥 Total de afiliadas: ${fmtN(totalAffiliates)}\n\n🏆 Top Performers: ${tops} | ⭐ Alto Valor: ${hv} | ✅ Confiáveis: ${rel}\n💡 Alto Potencial: ${segCounts.highpot||0} | 🌱 Promissoras: ${segCounts.promising||0}\n⚠️ Em Risco: ${segCounts.atrisk||0} | 💤 Inativas: ${segCounts.inactive||0}`;
+    return `**Panorama da base:**\n\n💰 GMV acumulado: ${fmtR(acum)}\n🛒 Pedidos: ${fmtN(totalOrders)} · 👥 Total: ${fmtN(totalAffiliates)}\n\n🏆 Top: ${segCounts.top||0} · ⭐ Alto Valor: ${segCounts.highval||0} · ✅ Confiáveis: ${segCounts.reliable||0}\n💡 Alto Potencial: ${segCounts.highpot||0} · 🌱 Promissoras: ${segCounts.promising||0}\n⚠️ Em Risco: ${segCounts.atrisk||0} · 💤 Inativas: ${segCounts.inactive||0}`;
   }
 
-  // "quem tem mais seguidores" / "maior audiencia"
-  if(/seguidores|audiencia|maior base|influencer/.test(q)){
+  // Seguidores / audiência / influencer
+  if(/seguidores|audiencia|audiência|maior base|influencer|macr[oa]|micr[oa]/.test(q)){
     const byFol=list.filter(a=>a.followers>0).sort((a,b)=>b.followers-a.followers).slice(0,5);
-    const rows=byFol.map((a,i)=>`${i+1}. @${a.handle} — ${fmtN(a.followers)} seguidores · GMV ${fmtR(a.gmv)}`).join("\n");
-    return `**Maiores audiências na base:**\n\n${rows}`;
+    const rows=byFol.map((a,i)=>`${i+1}. @${a.handle} — ${fmtN(a.followers)} seg. · GMV ${fmtR(a.gmv)}`).join("\n");
+    return `**Maiores audiências:**\n\n${rows}`;
   }
 
-  // "quem mais fez live" / "rainha do live"
-  if(/live|transmissao|transmissoes/.test(q)){
+  // Lives
+  if(/live|transmissao|transmissão|ao vivo/.test(q)){
     const byLive=list.filter(a=>a.lives>0).sort((a,b)=>b.lives-a.lives).slice(0,5);
-    if(byLive.length===0) return "Nenhuma afiliada com dados de live carregados no momento.";
+    if(byLive.length===0) return "Nenhuma afiliada com dados de live.";
     const rows=byLive.map((a,i)=>`${i+1}. @${a.handle} — ${fmtN(a.lives)} lives · GMV Live ${fmtR(a.gmvLive||0)}`).join("\n");
-    return `**Afiliadas mais ativas em lives:**\n\n${rows}`;
+    return `**Mais ativas em lives:**\n\n${rows}`;
   }
 
-  // "quem tem melhor score" / "score mais alto"
-  if(/melhor score|maior score|score mais alto|score/.test(q)){
+  // Score
+  if(/score|pontuacao|pontuação/.test(q)){
     const byScore=list.filter(a=>a.score!=null).sort((a,b)=>b.score-a.score).slice(0,5);
     const rows=byScore.map((a,i)=>`${i+1}. @${a.handle} — Score ${a.score}/100 · ${segInfo(a.seg).nome} · GMV ${fmtR(a.gmv)}`).join("\n");
-    return `**Afiliadas com maior Score:**\n\n${rows}`;
+    return `**Maior Score:**\n\n${rows}`;
   }
 
-  // fallback genérico
-  return `Não entendi bem a pergunta. Tente:\n• "Quem devo startar campanha?"\n• "O que falo pra @[handle]?"\n• "Quanto @[handle] vende?"\n• "Quem está em risco?"\n• "Me dá um resumo da base"\n• "Quem tem mais seguidores?"\n• "Quem tem melhor score?"`;
+  // fallback
+  return `Não entendi. Exemplos do que posso responder:\n• "Quem são as rising stars?"\n• "Quem devo startar campanha?"\n• "O que falo pra @[handle]?"\n• "Quanto @[handle] vende?"\n• "Quem está em risco?"\n• "Me dá um panorama da base"\n\nOu configure uma **Gemini API Key** (⚙️) para perguntas livres em linguagem natural.`;
 }
 
 function ChatIA({data,onClose}){
-  const [msgs,setMsgs]=useState([{role:"bot",text:"Oi! Sou a IA da AffiliateOS. Pergunte qualquer coisa sobre as afiliadas: quem startar campanha, o que falar pra alguém, quanto fulana vende..."}]);
+  const [msgs,setMsgs]=useState([{role:"bot",text:"Oi! Sou a IA da AffiliateOS.\n\nCom **Gemini Key** configurada (⚙️), respondo qualquer pergunta em linguagem natural usando os dados reais da base.\n\nSem key, uso respostas pré-programadas. Configure agora ou pergunte à vontade!"}]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
+  const [showSettings,setShowSettings]=useState(false);
+  const [apiKey,setApiKey]=useState("");
+  const [keyInput,setKeyInput]=useState("");
+  const [keyStatus,setKeyStatus]=useState(""); // "", "ok", "error"
   const endRef=useRef(null);
   useEffect(()=>{if(endRef.current)endRef.current.scrollIntoView({behavior:"smooth"});},[msgs]);
-  const send=()=>{
+
+  const saveKey=()=>{
+    const k=keyInput.trim();
+    if(!k){setKeyStatus("error");return;}
+    setApiKey(k);
+    setKeyStatus("ok");
+    setShowSettings(false);
+    setMsgs(m=>[...m,{role:"bot",text:"✅ Gemini conectada! Agora pode perguntar qualquer coisa livremente — os dados das afiliadas já estão no contexto."}]);
+  };
+
+  const send=async()=>{
     const q=input.trim();
     if(!q||loading) return;
     setInput("");
     setMsgs(m=>[...m,{role:"user",text:q}]);
     setLoading(true);
-    setTimeout(()=>{
-      const ans=queryIA(q,data);
+    try{
+      let ans;
+      if(apiKey){
+        ans=await callGemini(q,data,apiKey);
+      } else {
+        await new Promise(r=>setTimeout(r,200));
+        ans=queryIA(q,data);
+      }
       setMsgs(m=>[...m,{role:"bot",text:ans}]);
-      setLoading(false);
-    },300);
+    } catch(e){
+      setMsgs(m=>[...m,{role:"bot",text:`Erro ao chamar Gemini: ${e.message}\n\nVerifique a API Key em ⚙️ ou use sem key para respostas pré-programadas.`}]);
+    }
+    setLoading(false);
   };
+
   const renderText=t=>{
-    // Bold + newlines
     const parts=t.split(/(\*\*[^*]+\*\*|\n)/g);
     return parts.map((p,i)=>{
       if(p==="\n") return <br key={i}/>;
@@ -1194,26 +1272,64 @@ function ChatIA({data,onClose}){
       return p;
     });
   };
+
   return(
-    <div style={{position:"fixed",bottom:80,right:20,width:380,height:500,background:"#fff",borderRadius:16,boxShadow:"0 8px 32px rgba(0,0,0,0.18)",display:"flex",flexDirection:"column",zIndex:1000,border:"1px solid #e2e8f0",overflow:"hidden"}}>
-      <div style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{color:"#fff",fontWeight:700,fontSize:14}}>🤖 IA AffiliateOS</div>
-        <button onClick={onClose} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:14,fontWeight:700}}>✕</button>
+    <div style={{position:"fixed",bottom:80,right:20,width:390,height:540,background:"#fff",borderRadius:16,boxShadow:"0 8px 40px rgba(0,0,0,0.22)",display:"flex",flexDirection:"column",zIndex:1000,border:"1px solid #e2e8f0",overflow:"hidden"}}>
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",padding:"13px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:18}}>🤖</span>
+          <div>
+            <div style={{color:"#fff",fontWeight:700,fontSize:14,lineHeight:1}}>IA AffiliateOS</div>
+            <div style={{color:"rgba(255,255,255,0.7)",fontSize:10,marginTop:2}}>{apiKey?"Gemini conectada ✓":"Modo regras — configure key para IA real"}</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>setShowSettings(s=>!s)} title="Configurar Gemini API Key" style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",borderRadius:6,width:30,height:30,cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",borderRadius:6,width:30,height:30,cursor:"pointer",fontSize:16,fontWeight:700}}>✕</button>
+        </div>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}}>
+
+      {/* Settings panel */}
+      {showSettings&&<div style={{background:"#f8fafc",borderBottom:"1px solid #e2e8f0",padding:"14px 16px",flexShrink:0}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#334155",marginBottom:6}}>Gemini API Key</div>
+        <div style={{fontSize:11,color:"#64748b",marginBottom:10,lineHeight:1.5}}>
+          Crie uma key gratuita em <strong>aistudio.google.com</strong> → "Get API Key". Cole abaixo para ativar IA real com linguagem natural.
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <input value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="AIza..." type="password" style={{flex:1,border:`1px solid ${keyStatus==="error"?"#ef4444":keyStatus==="ok"?"#22c55e":"#e2e8f0"}`,borderRadius:7,padding:"7px 10px",fontSize:12,outline:"none",fontFamily:"monospace"}}/>
+          <button onClick={saveKey} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:7,padding:"7px 14px",cursor:"pointer",fontWeight:700,fontSize:12}}>Salvar</button>
+        </div>
+        {keyStatus==="ok"&&<div style={{fontSize:11,color:"#16a34a",marginTop:6}}>✅ Key salva — Gemini ativada</div>}
+        {keyStatus==="error"&&<div style={{fontSize:11,color:"#dc2626",marginTop:6}}>Cole uma key válida antes de salvar</div>}
+        {apiKey&&<div style={{fontSize:11,color:"#7c3aed",marginTop:6,cursor:"pointer"}} onClick={()=>{setApiKey("");setKeyInput("");setKeyStatus("");setMsgs(m=>[...m,{role:"bot",text:"Key removida. Voltei ao modo regras."}]);}}>🗑 Remover key atual</div>}
+      </div>}
+
+      {/* Messages */}
+      <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
         {msgs.map((m,i)=>(
           <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-            <div style={{maxWidth:"85%",background:m.role==="user"?"#7c3aed":"#f1f5f9",color:m.role==="user"?"#fff":"#1e293b",borderRadius:m.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px",padding:"10px 14px",fontSize:13,lineHeight:1.5,whiteSpace:"pre-line"}}>
+            <div style={{maxWidth:"88%",background:m.role==="user"?"#7c3aed":"#f1f5f9",color:m.role==="user"?"#fff":"#1e293b",borderRadius:m.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px",padding:"9px 13px",fontSize:12.5,lineHeight:1.55,whiteSpace:"pre-line"}}>
               {renderText(m.text)}
             </div>
           </div>
         ))}
-        {loading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"#f1f5f9",borderRadius:"12px 12px 12px 2px",padding:"10px 14px",fontSize:13,color:"#64748b"}}>Analisando...</div></div>}
+        {loading&&(
+          <div style={{display:"flex",justifyContent:"flex-start",alignItems:"center",gap:8}}>
+            <div style={{background:"#f1f5f9",borderRadius:"12px 12px 12px 2px",padding:"9px 14px",fontSize:12,color:"#64748b",display:"flex",gap:4}}>
+              <span style={{animation:"pulse 1s infinite"}}>●</span>
+              <span style={{animation:"pulse 1s infinite 0.2s"}}>●</span>
+              <span style={{animation:"pulse 1s infinite 0.4s"}}>●</span>
+            </div>
+          </div>
+        )}
         <div ref={endRef}/>
       </div>
-      <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",display:"flex",gap:8}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}} placeholder="Ex: Quem startar campanha?" style={{flex:1,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,outline:"none",fontFamily:"inherit"}}/>
-        <button onClick={send} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>→</button>
+
+      {/* Input */}
+      <div style={{padding:"10px 12px",borderTop:"1px solid #f1f5f9",display:"flex",gap:8,flexShrink:0,background:"#fff"}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey)send();}} placeholder={apiKey?"Pergunte qualquer coisa...":"Ex: Quem são as rising stars?"} style={{flex:1,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,outline:"none",fontFamily:"inherit",background:"#f8fafc"}}/>
+        <button onClick={send} disabled={loading} style={{background:loading?"#a78bfa":"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:loading?"not-allowed":"pointer",fontWeight:700,fontSize:14,transition:"background 0.2s"}}>→</button>
       </div>
     </div>
   );
