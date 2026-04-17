@@ -138,6 +138,8 @@ function processCSV(text) {
 
   // Detecta colunas pelos nomes (robusto a qualquer ordem)
   const headers = parseCSVLine(lines[0]);
+  console.log("🔍 HEADERS DO SHEETS:", headers);
+  console.log("🔍 LINHA 2 (dados):", parseCSVLine(lines[1]));
   const IDX = {
     handle:   findCol(headers, ["nome do criador","creator name","handle","username"]),
     gmv:      findCol(headers, ["valor bruto da mercadoria (gmv) de afiliados","gmv de afiliado","affiliate gmv","gross merchandise"]),
@@ -150,6 +152,7 @@ function processCSV(text) {
     videos:   findCol(headers, ["videos com produtos","shoppable videos","videos"]),
     followers:findCol(headers, ["seguidores de afiliados","affiliate followers","followers","seguidores"]),
   };
+  console.log("🔍 INDICES DETECTADOS:", IDX);
   // Fallback para indices fixos
   if(IDX.handle<0)    IDX.handle=0;
   if(IDX.gmv<0)       IDX.gmv=1;
