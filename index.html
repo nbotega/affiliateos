@@ -84,7 +84,12 @@ function parseCSVLine(line) {
 function toFloat(v) {
   if(v===null||v===undefined||v==="--"||v==="") return 0;
   if(typeof v==="number") return isNaN(v)?0:v;
-  const s = String(v).replace(/\s/g,"").replace("%","").replace(",",".");
+  let s = String(v)
+    .replace(/R\$\s*/g,"")   // remove R$
+    .replace(/\s/g,"")        // remove spaces
+    .replace(/%/g,"")          // remove %
+    .replace(/\./g,"")        // remove thousands dots
+    .replace(",",".");         // decimal comma → period
   const n = parseFloat(s);
   return isNaN(n)?0:n;
 }
@@ -142,13 +147,13 @@ function processCSV(text) {
   console.log("🔍 LINHA 2 (dados):", parseCSVLine(lines[1]));
   const IDX = {
     handle:   findCol(headers, ["nome do criador","creator name","handle","username"]),
-    gmv:      findCol(headers, ["valor bruto da mercadoria (gmv) de afiliados","gmv de afiliado","affiliate gmv","gross merchandise"]),
-    gmvLive:  findCol(headers, ["gmv de live","live gmv","gmv live"]),
+    gmv:      findCol(headers, ["gmv desde comunicacao","gmv desde","valor bruto da mercadoria (gmv) de afiliados","gmv de afiliado","affiliate gmv","gross merchandise"]),
+    gmvLive:  findCol(headers, ["lives desde comunicacao","lives desde","gmv de live","live gmv","gmv live"]),
     gmvVideo: findCol(headers, ["gmv de video","video gmv","gmv de vid"]),
     comm:     findCol(headers, ["comissao estimada","estimated commission","commission"]),
-    orders:   findCol(headers, ["pedidos de afiliados","affiliate orders","orders"]),
+    orders:   findCol(headers, ["pedidos de afiliados","affiliate orders","orders","pedidos"]),
     ctr:      findCol(headers, ["taxa de cliques","click-through rate","ctr"]),
-    lives:    findCol(headers, ["transmissoes ao vivo","live streams","lives"]),
+    lives:    findCol(headers, ["lives desde comunicacao","lives desde","transmissoes ao vivo","live streams"]),
     videos:   findCol(headers, ["videos com produtos","shoppable videos","videos"]),
     followers:findCol(headers, ["seguidores de afiliados","affiliate followers","followers","seguidores"]),
   };
