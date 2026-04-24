@@ -137,6 +137,8 @@ function autoTags(a) {
   else if(a.lives>0) t.push("Live");
   if(a.videos>0) t.push("Vídeo");
   if(a.gmv>10000) t.push("Alta Conv.");
+  // Detecção de agência: comissão ≥ 15% do GMV sugere repasse de agência
+  if(a.gmv>0&&(a.commission||0)>0&&(a.commission/a.gmv)>=0.15) t.push("Agência");
   return t;
 }
 
@@ -229,7 +231,7 @@ function processCSV(text) {
   activeList.forEach(a=>{
     a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);
     a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent);
-    a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent});
+    a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent,commission:a.commission});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
   });
@@ -325,7 +327,7 @@ function buildDataFromMonths(monthResults) {
   allList.forEach(a=>{
     a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);
     a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent);
-    a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent});
+    a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent,commission:a.commission});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
     totalGMV+=a.gmv; totalOrders+=a.orders; totalAffiliates++;
@@ -411,7 +413,7 @@ function Avatar({initials:ini,size=8}){
 }
 
 function Sidebar({page,setPage,liveStatus}){
-  const items=[{id:"dashboard",icon:"📊",label:"Dashboard"},{id:"afiliadas",icon:"👥",label:"Afiliadas"},{id:"segmentos",icon:"🎯",label:"Segmentos RFM"},{id:"descoberta",icon:"🔍",label:"Descoberta"},{id:"campanhas",icon:"📣",label:"Campanhas"},{id:"gamificacao",icon:"🏆",label:"Gamificação"},{id:"guia",icon:"📖",label:"Guia de Score"}];
+  const items=[{id:"dashboard",icon:"📊",label:"Dashboard"},{id:"afiliadas",icon:"👥",label:"Afiliadas"},{id:"segmentos",icon:"🎯",label:"Segmentos RFM"},{id:"descoberta",icon:"🔍",label:"Descoberta"},{id:"campanhas",icon:"📣",label:"Contatos"},{id:"gamificacao",icon:"📊",label:"Funil"},{id:"guia",icon:"📖",label:"Guia de Score"}];
   return(
     <div style={{width:216,background:"#0f172a",height:"100vh",position:"fixed",left:0,top:0,display:"flex",flexDirection:"column",padding:"20px 0"}}>
       <div style={{padding:"0 20px 24px"}}><div style={{fontWeight:800,fontSize:16,color:"#fff"}}>AffiliateOS</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>L'Oréal Brasil · TikTok Shop</div></div>
@@ -485,16 +487,21 @@ function BarChart({data,color,label,formatY}){
 }
 
 function EvolucaoTab({a}){
-  const gmvData  = a.dailyGMV||[];
-  const livesData= a.dailyLives||[];
-  const vidsData = a.dailyVids||[];
+  const gmvData   = a.dailyGMV||[];
+  const livesData = a.dailyLives||[];
+  const vidsData  = a.dailyVids||[];
   const gmvAcumulado = a.gmvAcumulado||a.gmv||0;
   const activeMths= gmvData.filter(d=>d.value>0).length;
-  const bestMth  = gmvData.reduce((b,d)=>d.value>b.value?d:b,{label:"—",value:0});
-  const gmvPorLive= (a.lives||0)>0?((a.gmv||0)/(a.lives||0)):0;
-  // GMV/conteudo acumulado
-  const totalLives= livesData.reduce((s,d)=>s+d.value,0);
-  const gmvAcumPorLive= totalLives>0?(gmvAcumulado/totalLives):0;
+  const bestMth   = gmvData.reduce((b,d)=>d.value>b.value?d:b,{label:"—",value:0});
+  // Conteúdos por mês = lives + meses com vídeo ativo
+  const conteudoData = gmvData.map((_,i)=>({
+    label: livesData[i]?.label||gmvData[i]?.label||"",
+    value: (livesData[i]?.value||0) + (vidsData[i]?.value>0?1:0)
+  }));
+  const totalLives = livesData.reduce((s,d)=>s+d.value,0);
+  const totalVidMths = vidsData.filter(d=>d.value>0).length;
+  const totalConteudos = totalLives + totalVidMths;
+  const gmvPorConteudo = totalConteudos>0?(gmvAcumulado/totalConteudos):0;
 
   if(gmvData.length===0) return(
     <div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>
@@ -511,7 +518,7 @@ function EvolucaoTab({a}){
           ["GMV Acumulado","💰",fmtBRL(gmvAcumulado),"#7c3aed","#ede9fe"],
           ["Meses Ativos","📅",`${activeMths}/${gmvData.length}`,"#059669","#dcfce7"],
           ["Melhor Mês","🏆",bestMth.value>0?bestMth.label:"—","#d97706","#fef3c7"],
-          ["GMV/Live Acum.","⚡",gmvAcumPorLive>0?fmtBRL(gmvAcumPorLive):"—","#0891b2","#cffafe"],
+          ["GMV/Conteúdo","⚡",gmvPorConteudo>0?fmtBRL(gmvPorConteudo):"—","#0891b2","#cffafe"],
         ].map(([l,e,v,c,bg])=>(
           <div key={l} style={{background:bg,borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
             <div style={{fontSize:13,fontWeight:800,color:c}}>{v}</div>
@@ -519,35 +526,48 @@ function EvolucaoTab({a}){
           </div>
         ))}
       </div>
-      {/* Gráfico GMV mensal */}
+      {/* GMV mensal */}
       <div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:10}}>
         <BarChart data={gmvData} color="#7c3aed" label="📈 GMV por Mês (R$)" formatY={v=>`R$${v>999?(v/1000).toFixed(0)+"k":v.toFixed(0)}`}/>
       </div>
-      {/* Gráfico Lives mensal */}
+      {/* Conteúdos por mês (lives + vídeos ativos) */}
       <div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:10}}>
-        <BarChart data={livesData} color="#06b6d4" label="📡 Lives por Mês" formatY={v=>String(v)}/>
+        <BarChart data={conteudoData} color="#06b6d4" label="🎬 Conteúdos por Mês (lives + meses c/ vídeo)" formatY={v=>String(Math.round(v))}/>
       </div>
-      {/* Gráfico GMV Vídeo mensal */}
+      {/* GMV Vídeo mensal */}
       {vidsData.some(d=>d.value>0)&&<div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:10}}>
-        <BarChart data={vidsData} color="#0891b2" label="🎬 GMV Vídeo por Mês (R$)" formatY={v=>`R$${v>999?(v/1000).toFixed(0)+"k":v.toFixed(0)}`}/>
+        <BarChart data={vidsData} color="#0891b2" label="🛍 GMV Vídeo por Mês (R$)" formatY={v=>`R$${v>999?(v/1000).toFixed(0)+"k":v.toFixed(0)}`}/>
       </div>}
-      {/* Insight automático */}
-      <div style={{background:"#ede9fe",borderRadius:12,padding:14,fontSize:12,color:"#5b21b6",lineHeight:1.6}}>
-        <span style={{fontWeight:700}}>💡 Insight: </span>
-        {gmvAcumulado>0&&activeMths>1
-          ? `GMV acumulado de ${fmtBRL(gmvAcumulado)} em ${activeMths} meses. ${gmvAcumPorLive>0?`Média de ${fmtBRL(gmvAcumPorLive)} por live.`:""} ${bestMth.value>0?`Melhor mês: ${bestMth.label}.`:""}`
-          : gmvAcumulado>0
-          ? `Ativa em 1 mês com ${fmtBRL(gmvAcumulado)} de GMV.`
-          : `Sem atividade de GMV registrada. Candidata a campanha de reativação.`
-        }
-      </div>
     </div>
   );
 }
 
-function AfiliadaPanel({a,onClose}){
-  const [tab,setTab]=useState("overview");
+function gerarInsight(a){
   const si=segInfo(a.seg);
+  const gmv=a.gmv||0;
+  const acum=a.gmvAcumulado||gmv;
+  const mths=(a.dailyGMV||[]).filter(d=>d.value>0);
+  const best=mths.length>0?mths.reduce((b,d)=>d.value>b.value?d:b,mths[0]):null;
+  const isAgencia=(a.tags||[]).includes("Agência");
+  const totalContent=(a.lives||0)+(a.videos||0);
+  if(a.seg==="top")      return {emoji:"🏆",cor:"#059669",bg:"#dcfce7",texto:`Performance de referência. GMV acumulado de ${fmtBRL(acum)}.${best?` Melhor mês: ${best.label}.`:""} Mantenha engajamento ativo — ofereça acesso antecipado a lançamentos e campanhas exclusivas.`};
+  if(a.seg==="highval")  return {emoji:"⭐",cor:"#7c3aed",bg:"#ede9fe",texto:`Alta frequência e GMV consistente (${fmtBRL(gmv)}). Está a um passo do Top — proponha meta de GMV com bonificação para acelerar a progressão.`};
+  if(a.seg==="reliable") return {emoji:"✅",cor:"#0891b2",bg:"#cffafe",texto:`Afiliada confiável, mas com potencial não explorado. ${totalContent>0?`Produz conteúdo mas poderia escalar.`:""} Desafio de frequência com premiação pode resolver.`};
+  if(a.seg==="highpot")  return {emoji:"💡",cor:"#d97706",bg:"#fef3c7",texto:`${fmtNum(a.followers||0)} seguidores e pouco GMV ainda (${fmtBRL(gmv)}). A audiência está lá — falta produto certo e suporte de conteúdo. Prioridade de ativação.`};
+  if(a.seg==="promising")return {emoji:"🌱",cor:"#059669",bg:"#dcfce7",texto:`Mostrando tração inicial (${fmtBRL(gmv)}). Não deixe esfriar — ofereça kit de produto, briefing de vídeo e acompanhamento próximo nas próximas 2 semanas.`};
+  if(a.seg==="support")  return {emoji:"⚠️",cor:"#ea580c",bg:"#ffedd5",texto:`Vende mas abaixo do potencial. Identifique o gargalo: produto, comissão ou frequência${isAgencia?" (afiliada de agência — alinhe expectativas com o intermediário)":""}.`};
+  if(a.seg==="atrisk")   return {emoji:"🚨",cor:"#dc2626",bg:"#fee2e2",texto:`Tinha audiência mas parou de publicar. Janela de resgate curta — envie mensagem pessoal com novidade de produto esta semana.`};
+  if(a.seg==="new")      return {emoji:"🎯",cor:"#2563eb",bg:"#dbeafe",texto:`Afiliada nova. Foque em onboarding: mande material de vídeos que convertem, produto para testar e check-in em 7 dias.`};
+  if(a.seg==="inactive") return {emoji:"💤",cor:"#64748b",bg:"#f1f5f9",texto:`Sem atividade recente. Candidata a reativação automática via bot — ou mensagem personalizada com campanha nova.`};
+  return {emoji:"📋",cor:"#64748b",bg:"#f1f5f9",texto:`Perfil em análise. Verifique dados e reclassifique se necessário.`};
+}
+
+function AfiliadaPanel({a,onClose,crm,onCrmUpdate}){
+  const [tab,setTab]=useState("overview");
+  const [crmLocal,setCrmLocal]=useState(crm||{});
+  const si=segInfo(a.seg);
+  const insight=gerarInsight(a);
+  const saveCrm=field=>v=>{const u={...crmLocal,[field]:v};setCrmLocal(u);onCrmUpdate&&onCrmUpdate(u);};
   return(
     <div style={{position:"fixed",inset:0,background:"#00000066",display:"flex",alignItems:"center",justifyContent:"flex-end",zIndex:1000}} onClick={onClose}>
       <div style={{width:480,height:"100vh",background:"#fff",overflow:"auto",boxShadow:"-4px 0 24px rgba(0,0,0,0.15)"}} onClick={e=>e.stopPropagation()}>
@@ -574,35 +594,68 @@ function AfiliadaPanel({a,onClose}){
             ))}
           </div>
         </div>
-        <div style={{display:"flex",borderBottom:"1px solid #f1f5f9",padding:"0 24px",gap:4}}>
-          {[["overview","📋 Overview"],["evolucao","📈 Evolução"],["mensagem","💬 Mensagem"]].map(([id,lbl])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{padding:"12px 16px",border:"none",background:"none",borderBottom:tab===id?"2px solid #7c3aed":"2px solid transparent",color:tab===id?"#7c3aed":"#64748b",fontWeight:tab===id?600:400,fontSize:13,cursor:"pointer"}}>{lbl}</button>
+        <div style={{display:"flex",borderBottom:"1px solid #f1f5f9",padding:"0 16px",gap:2,overflowX:"auto"}}>
+          {[["overview","📋 Overview"],["evolucao","📈 Evolução"],["crm","📁 CRM"],["mensagem","💬 Mensagem"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{padding:"11px 14px",border:"none",background:"none",borderBottom:tab===id?"2px solid #7c3aed":"2px solid transparent",color:tab===id?"#7c3aed":"#64748b",fontWeight:tab===id?600:400,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>{lbl}</button>
           ))}
         </div>
-        <div style={{padding:24}}>
+        <div style={{padding:20}}>
           {tab==="evolucao"&&<EvolucaoTab a={a}/>}
           {tab==="overview"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {/* IA Insight */}
+              <div style={{background:insight.bg,borderRadius:12,padding:14,border:`1px solid ${insight.cor}30`,marginBottom:2}}>
+                <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                  <span style={{fontSize:18,flexShrink:0}}>{insight.emoji}</span>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:12,color:insight.cor,marginBottom:4}}>Insight IA — Ação Recomendada</div>
+                    <div style={{fontSize:12,color:"#334155",lineHeight:1.6}}>{insight.texto}</div>
+                  </div>
+                </div>
+              </div>
+              {/* Dados */}
               {[["GMV Total",fmtBRL(a.gmv),"💰"],["GMV Live",fmtBRL(a.gmvLive),"📡"],["Pedidos",fmtNum(a.orders),"🛒"],["Comissão",fmtBRL(a.commission),"💸"],["Lives",a.lives,"🔴"],["GMV Vídeo",a.videosContent>0?fmtBRL(a.videosContent):"—","🎬"],["Seguidores",fmtNum(a.followers)||"—","👥"],["Score IA",a.score!=null?(a.score+"/100"):"—","🤖"]].map(([l,v,e])=>(
-                <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",background:"#f8fafc",borderRadius:10}}>
-                  <span style={{fontSize:13,color:"#64748b"}}>{e} {l}</span><span style={{fontSize:14,fontWeight:700,color:"#0f172a"}}>{v}</span>
+                <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#f8fafc",borderRadius:10}}>
+                  <span style={{fontSize:12,color:"#64748b"}}>{e} {l}</span><span style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>{v}</span>
                 </div>
               ))}
-              <div style={{background:si.bg,borderRadius:12,padding:16,border:`1px solid ${si.cor}30`}}>
-                <div style={{fontWeight:700,fontSize:13,color:si.cor,marginBottom:10}}>🎯 Estratégia: {si.nome}</div>
+              <div style={{background:si.bg,borderRadius:12,padding:14,border:`1px solid ${si.cor}30`}}>
+                <div style={{fontWeight:700,fontSize:12,color:si.cor,marginBottom:8}}>🎯 Estratégia: {si.nome}</div>
                 {[["Comunicação",si.comm],["Gamificação",si.gami],["Incentivo",si.incentivo],["Execução",si.tipo]].map(([l,v])=>(
-                  <div key={l} style={{display:"flex",gap:8,fontSize:12,marginBottom:6}}><span style={{color:"#94a3b8",minWidth:90}}>{l}:</span><span style={{color:"#334155",fontWeight:500}}>{v}</span></div>
+                  <div key={l} style={{display:"flex",gap:8,fontSize:11,marginBottom:5}}><span style={{color:"#94a3b8",minWidth:90}}>{l}:</span><span style={{color:"#334155",fontWeight:500}}>{v}</span></div>
                 ))}
               </div>
+            </div>
+          )}
+          {tab==="crm"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              <div style={{fontSize:12,color:"#94a3b8",marginBottom:4}}>Ficha leve de CRM — dados editáveis por afiliada</div>
+              {[
+                {label:"📧 E-mail",field:"email",type:"email",placeholder:"email@afiliada.com"},
+                {label:"🎂 Aniversário",field:"aniversario",type:"date",placeholder:""},
+                {label:"🏢 Agência",field:"agencia",type:"text",placeholder:"Nome da agência (se houver)"},
+                {label:"📦 Amostras enviadas",field:"amostras",type:"text",placeholder:"Ex: Kit Verão 2025"},
+                {label:"📝 Notas",field:"notas",type:"text",placeholder:"Observações internas..."},
+              ].map(({label,field,type,placeholder})=>(
+                <div key={field}>
+                  <div style={{fontSize:11,color:"#64748b",marginBottom:4,fontWeight:600}}>{label}</div>
+                  <input type={type} value={crmLocal[field]||""} onChange={e=>saveCrm(field)(e.target.value)} placeholder={placeholder} style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:12,fontFamily:"inherit",outline:"none",background:"#f8fafc",color:"#334155",boxSizing:"border-box"}}/>
+                </div>
+              ))}
+              <div style={{display:"flex",gap:8,marginTop:4}}>
+                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#334155",cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!(crmLocal.recebeuSample)} onChange={e=>saveCrm("recebeuSample")(e.target.checked)} style={{width:16,height:16}}/>
+                  Recebeu amostra de produto
+                </label>
+              </div>
+              <div style={{fontSize:10,color:"#94a3b8",marginTop:4}}>Dados salvos na sessão atual. Para persistência permanente, integre com banco de dados.</div>
             </div>
           )}
           {tab==="mensagem"&&(
             <div>
               <textarea defaultValue={`Oi @${a.handle}! 👋\n\nVi seus resultados no TikTok Shop e ficamos impressionados!\n\nQuero te convidar para uma oportunidade exclusiva L'Oréal. Podemos conversar? 🌟`} style={{width:"100%",height:140,borderRadius:10,border:"1px solid #e2e8f0",padding:12,fontSize:13,resize:"none",fontFamily:"inherit",color:"#334155",marginBottom:12}}/>
-              <div style={{display:"flex",gap:10}}>
-                <button style={{flex:1,background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>📱 DM TikTok</button>
-                <button style={{flex:1,background:"#25d366",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>💬 WhatsApp</button>
-              </div>
+              <button style={{width:"100%",marginBottom:8,background:"#000",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>📋 Copiar para DM TikTok</button>
+              <button style={{width:"100%",background:"#25d366",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>💬 Copiar para WhatsApp</button>
             </div>
           )}
         </div>
@@ -636,28 +689,32 @@ function Dashboard({setPage,data,liveStatus,onSelect,goToSeg}){
       value:fmtBRL(gmvTotal),
       icon:"💰",cor:"#7c3aed",bg:"#ede9fe",
       sub:`${fmtNum(totalOrders)} pedidos · ${periodoLabel}`,
-      tip:"Soma do GMV bruto gerado por todas as afiliadas no período carregado."
+      tip:"Soma do GMV bruto gerado por todas as afiliadas no período carregado.",
+      seg:null
     },
     {
       label:"Afiliadas com Venda",
       value:fmtNum(comVenda),
       icon:"📈",cor:"#2563eb",bg:"#dbeafe",
       sub:`de ${fmtNum(totalAffiliates)} na base`,
-      tip:"Quantas afiliadas geraram ao menos R$1 de GMV no período. O restante está sem venda ainda."
+      tip:"Quantas afiliadas geraram ao menos R$1 de GMV no período. Clique para ver a lista.",
+      seg:"comVenda"
     },
     {
       label:"Núcleo de Valor",
       value:fmtNum(nucleoCount),
       icon:"⭐",cor:"#059669",bg:"#dcfce7",
       sub:`Top + Alto Valor + Confiáveis · ${nucleoPct}% do GMV`,
-      tip:"As afiliadas que já provaram resultado. Representam poucos perfis mas concentram a maior parte do GMV."
+      tip:"As afiliadas que já provaram resultado. Clique para ver a lista.",
+      seg:"nucleo"
     },
     {
       label:"Alto Potencial",
       value:fmtNum(potencialCount),
       icon:"🚀",cor:"#d97706",bg:"#fef3c7",
       sub:"Grande audiência, GMV ainda baixo",
-      tip:"Afiliadas com muitos seguidores mas que ainda não converteram bem. São a maior oportunidade de crescimento."
+      tip:"Afiliadas com muitos seguidores mas que ainda não converteram bem. Clique para ver a lista.",
+      seg:"altopot"
     },
   ];
 
@@ -675,10 +732,18 @@ function Dashboard({setPage,data,liveStatus,onSelect,goToSeg}){
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:24}}>
         {kpis.map(k=>(
           <Tooltip key={k.label} text={k.tip} width={220}>
-            <div style={{background:"#fff",borderRadius:14,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,0.06)",border:"1px solid #f1f5f9",cursor:"help"}}>
+            <div
+              onClick={k.seg?()=>goToSeg&&goToSeg(k.seg):undefined}
+              style={{background:"#fff",borderRadius:14,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,0.06)",border:"1px solid #f1f5f9",cursor:k.seg?"pointer":"help",transition:"box-shadow 0.15s,transform 0.15s"}}
+              onMouseEnter={k.seg?e=>{e.currentTarget.style.boxShadow=`0 6px 18px ${k.cor}25`;e.currentTarget.style.transform="translateY(-2px)";}:undefined}
+              onMouseLeave={k.seg?e=>{e.currentTarget.style.boxShadow="0 1px 3px rgba(0,0,0,0.06)";e.currentTarget.style.transform="none";}:undefined}
+            >
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
                 <span style={{fontSize:22}}>{k.icon}</span>
-                <div style={{background:k.bg,borderRadius:6,padding:"2px 8px",fontSize:10,color:k.cor,fontWeight:700}}>{liveStatus==="live"?"Ao vivo":"Base"}</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {k.seg&&<span style={{fontSize:10,color:k.cor,fontWeight:700}}>↗ ver lista</span>}
+                  <div style={{background:k.bg,borderRadius:6,padding:"2px 8px",fontSize:10,color:k.cor,fontWeight:700}}>{liveStatus==="live"?"Ao vivo":"Base"}</div>
+                </div>
               </div>
               <div style={{fontSize:24,fontWeight:800,color:k.cor}}>{k.value}</div>
               <div style={{fontSize:12,color:"#334155",fontWeight:600,marginTop:2}}>{k.label}</div>
@@ -693,8 +758,15 @@ function Dashboard({setPage,data,liveStatus,onSelect,goToSeg}){
           {SEGMENTOS.filter(s=>s.key!=="lost").map(s=>{
             const cnt=segCounts[s.key]||0,pct=totalAffiliates>0?((cnt/totalAffiliates)*100).toFixed(1):0;
             const maxV=Math.max(...SEGMENTOS.map(x=>segCounts[x.key]||0));
-            return(<div key={s.key} style={{marginBottom:10}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}><span style={{color:"#334155",fontWeight:500}}>{s.nome}</span><span style={{color:"#64748b"}}>{fmtNum(cnt)} · {pct}%</span></div>
+            return(<div key={s.key} style={{marginBottom:10,cursor:"pointer",borderRadius:8,padding:"4px 6px",transition:"background 0.12s"}}
+              onClick={()=>goToSeg&&goToSeg(s.key)}
+              onMouseEnter={e=>e.currentTarget.style.background="#f8fafc"}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+            >
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                <span style={{color:"#334155",fontWeight:500}}>{s.nome}</span>
+                <span style={{color:"#64748b"}}>{fmtNum(cnt)} · {pct}% <span style={{color:s.cor,fontWeight:700,fontSize:10}}>↗</span></span>
+              </div>
               <div style={{height:8,background:"#f1f5f9",borderRadius:4,overflow:"hidden"}}><div style={{width:`${maxV>0?(cnt/maxV)*100:0}%`,height:"100%",background:s.cor,borderRadius:4}}/></div>
             </div>);
           })}
@@ -755,7 +827,15 @@ function Dashboard({setPage,data,liveStatus,onSelect,goToSeg}){
 
 function Afiliadas({data,onSelect,segFilter,setSegFilter}){
   const [search,setSearch]=useState("");const segF=segFilter||"all";const setSegF=v=>{if(setSegFilter)setSegFilter(v);};
-  const filtered=data.activeList.filter(a=>(!search||a.handle.toLowerCase().includes(search.toLowerCase()))&&(segF==="all"||a.seg===segF));
+  const filtered=data.activeList.filter(a=>{
+    const matchSearch=!search||a.handle.toLowerCase().includes(search.toLowerCase());
+    const matchSeg=segF==="all"
+      ||(segF==="comVenda"?(a.gmv||0)>0
+      :segF==="nucleo"?["top","highval","reliable"].includes(a.seg)
+      :segF==="altopot"?["highpot","promising"].includes(a.seg)
+      :a.seg===segF);
+    return matchSearch&&matchSeg;
+  });
   return(
     <div>
       {/* panel handled at App level */}
@@ -767,32 +847,38 @@ function Afiliadas({data,onSelect,segFilter,setSegFilter}){
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar handle..." style={{flex:1,border:"1px solid #e2e8f0",borderRadius:8,padding:"9px 14px",fontSize:13,color:"#334155"}}/>
         <select value={segF} onChange={e=>setSegF(e.target.value)} style={{border:"1px solid #e2e8f0",borderRadius:8,padding:"9px 14px",fontSize:13,color:"#334155",background:"#fff"}}>
           <option value="all">Todos segmentos</option>
+          <option value="comVenda">✅ Com Venda</option>
+          <option value="nucleo">⭐ Núcleo de Valor</option>
+          <option value="altopot">🚀 Alto Potencial</option>
           {SEGMENTOS.map(s=><option key={s.key} value={s.key}>{s.nome}</option>)}
         </select>
       </div>
       <div style={{background:"#fff",borderRadius:14,border:"1px solid #f1f5f9",overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#f8fafc"}}>
-            {["Afiliada","Segmento","Score","GMV","Lives","GMV Vídeo","Ação"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:h==="Ação"?"center":"left",fontWeight:600,color:"#64748b",fontSize:12}}>{h}</th>)}
+            {["Afiliada","Segmento","Score","GMV","Conteúdos","Vídeos (GMV)","Ação"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:h==="Ação"?"center":"left",fontWeight:600,color:"#64748b",fontSize:12}}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {filtered.slice(0,100).map((a,i)=>(
+            {filtered.slice(0,100).map((a,i)=>{
+              const totalConteudos=(a.lives||0)+(a.videos||0);
+              const isAgencia=(a.tags||[]).includes("Agência");
+              return(
               <tr key={a.id} style={{borderTop:"1px solid #f8fafc",background:i%2===0?"#fff":"#fafafa",cursor:"pointer"}} onClick={()=>onSelect(a)}>
                 <td style={{padding:"12px 16px"}}>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
                     <Avatar initials={a.avatar} size={7}/>
-                    <div><div style={{fontWeight:600,color:"#0f172a"}}>@{a.handle}</div>
-                    <div style={{display:"flex",gap:4,marginTop:3}}>{(a.tags||[]).slice(0,2).map(t=><span key={t} style={{background:"#f1f5f9",color:"#64748b",fontSize:10,padding:"1px 6px",borderRadius:10}}>{t}</span>)}</div></div>
+                    <div><div style={{fontWeight:600,color:"#0f172a",display:"flex",alignItems:"center",gap:6}}>@{a.handle}{isAgencia&&<span style={{background:"#fef3c7",color:"#92400e",fontSize:9,padding:"1px 5px",borderRadius:8,fontWeight:700}}>AG</span>}</div>
+                    <div style={{display:"flex",gap:4,marginTop:3}}>{(a.tags||[]).filter(t=>t!=="Agência").slice(0,2).map(t=><span key={t} style={{background:"#f1f5f9",color:"#64748b",fontSize:10,padding:"1px 6px",borderRadius:10}}>{t}</span>)}</div></div>
                   </div>
                 </td>
                 <td style={{padding:"12px 16px"}}><Tooltip text={SEG_TOOLTIPS[a.seg]||""} width={260}><span style={{background:segBg(a.seg),color:segCor(a.seg),fontWeight:600,fontSize:11,padding:"3px 10px",borderRadius:20,cursor:"help"}}>{segInfo(a.seg).nome}</span></Tooltip></td>
                 <td style={{padding:"12px 16px"}}><span style={{background:"#f1f5f9",borderRadius:8,padding:"2px 8px",fontSize:11,fontWeight:700,color:"#7c3aed"}}>{a.score||0}</span></td>
                 <td style={{padding:"12px 16px",fontWeight:700,color:"#7c3aed"}}>{fmtBRL(a.gmv)}</td>
-                <td style={{padding:"12px 16px",color:"#334155"}}>{a.lives||0}</td>
+                <td style={{padding:"12px 16px",color:"#334155",fontWeight:600}}>{totalConteudos>0?<span>{totalConteudos}<span style={{fontSize:10,color:"#94a3b8",fontWeight:400}}> ({a.lives||0}L+{a.videos||0}V)</span></span>:"—"}</td>
                 <td style={{padding:"12px 16px",color:"#0891b2",fontWeight:600,fontSize:12}}>{a.videosContent>0?fmtBRL(a.videosContent):"—"}</td>
                 <td style={{padding:"12px 16px",textAlign:"center"}}><button onClick={e=>{e.stopPropagation();onSelect(a);}} style={{background:"#ede9fe",color:"#7c3aed",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Ver →</button></td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
         {filtered.length===0&&<div style={{padding:40,textAlign:"center",fontSize:13,color:"#94a3b8"}}>Nenhuma afiliada encontrada</div>}
@@ -864,104 +950,162 @@ function Descoberta(){
   );
 }
 
-function Campanhas({data}){
-  const [step,setStep]=useState(0);const [segs,setSegs]=useState(["highpot","promising","new"]);const [canal,setCanal]=useState("tiktok");
-  const [msg,setMsg]=useState("Oi {{handle}}! 👋 Bora turbinar seus resultados com L'Oréal no TikTok Shop? Temos algo especial pra você! 🌟");
-  const total=segs.reduce((s,k)=>s+(data.segCounts[k]||0),0);
+function Campanhas({data,contacts,addContact}){
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({handle:"",canal:"tiktok",retorno:"pendente",nota:""});
+  const retornoOpts=[{v:"pendente",l:"⏳ Pendente",c:"#d97706"},{v:"sim",l:"✅ Retornou",c:"#059669"},{v:"nao",l:"❌ Sem retorno",c:"#dc2626"}];
+  const canais=[{v:"tiktok",l:"📱 TikTok DM"},{v:"whatsapp",l:"💬 WhatsApp"},{v:"email",l:"📧 Email"},{v:"presencial",l:"🤝 Presencial"}];
+  const submit=()=>{
+    if(!form.handle.trim()) return;
+    addContact({...form,handle:form.handle.replace(/^@/,""),data:new Date().toLocaleDateString("pt-BR")});
+    setForm({handle:"",canal:"tiktok",retorno:"pendente",nota:""});
+    setShowForm(false);
+  };
+  const byRetorno=r=>(contacts||[]).filter(c=>c.retorno===r).length;
   return(
     <div>
-      <div style={{marginBottom:24}}><h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>📣 Campanhas</h1><p style={{fontSize:13,color:"#64748b",marginTop:2}}>Disparo em massa via DM TikTok + WhatsApp</p></div>
-      <div style={{display:"flex",gap:0,marginBottom:24,background:"#fff",borderRadius:12,padding:4,border:"1px solid #f1f5f9",width:"fit-content"}}>
-        {["Segmento","Mensagem","Canal","Confirmar"].map((s,i)=><button key={s} onClick={()=>setStep(i)} style={{padding:"8px 18px",border:"none",borderRadius:8,background:step===i?"#7c3aed":"transparent",color:step===i?"#fff":"#94a3b8",fontWeight:step===i?700:400,fontSize:13,cursor:"pointer"}}>{i+1}. {s}</button>)}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+        <div><h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>📣 Contatos</h1><p style={{fontSize:13,color:"#64748b",marginTop:2}}>Rastreio de abordagens — quem foi contatado, quando e se houve retorno</p></div>
+        <button onClick={()=>setShowForm(s=>!s)} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"9px 18px",fontWeight:600,fontSize:13,cursor:"pointer"}}>+ Registrar contato</button>
       </div>
-      {step===0&&<div>
-        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:12}}>Selecionar Segmentos-Alvo</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:20}}>
-          {SEGMENTOS.filter(s=>s.bot).map(s=>{const on=segs.includes(s.key);return(
-            <div key={s.key} onClick={()=>setSegs(on?segs.filter(k=>k!==s.key):[...segs,s.key])} style={{background:"#fff",borderRadius:12,padding:16,border:`2px solid ${on?s.cor:s.cor+"30"}`,cursor:"pointer",display:"flex",gap:12,alignItems:"center"}}>
-              <div style={{width:20,height:20,borderRadius:4,background:on?s.cor:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{on&&<span style={{color:"#fff",fontSize:12}}>✓</span>}</div>
-              <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:"#0f172a"}}>{s.nome}</div><div style={{fontSize:11,color:"#94a3b8"}}>{fmtNum(data.segCounts[s.key]||0)} afiliadas</div></div>
-            </div>
-          );})}
+
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+        {[["Total abordadas",fmtNum((contacts||[]).length),"📊","#7c3aed","#ede9fe"],["Retornaram",fmtNum(byRetorno("sim")),"✅","#059669","#dcfce7"],["Sem retorno",fmtNum(byRetorno("nao")),"❌","#dc2626","#fee2e2"]].map(([l,v,e,c,bg])=>(
+          <div key={l} style={{background:bg,borderRadius:12,padding:16,textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:12,color:"#64748b",marginTop:4}}>{e} {l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Formulário */}
+      {showForm&&<div style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #e2e8f0",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
+        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:14}}>Registrar abordagem</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          <div><div style={{fontSize:11,color:"#64748b",fontWeight:600,marginBottom:4}}>Handle da afiliada</div>
+            <input value={form.handle} onChange={e=>setForm(f=>({...f,handle:e.target.value}))} placeholder="@handle" style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          <div><div style={{fontSize:11,color:"#64748b",fontWeight:600,marginBottom:4}}>Canal</div>
+            <select value={form.canal} onChange={e=>setForm(f=>({...f,canal:e.target.value}))} style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,background:"#fff",outline:"none"}}>
+              {canais.map(c=><option key={c.v} value={c.v}>{c.l}</option>)}
+            </select>
+          </div>
         </div>
-        <div style={{background:"#ede9fe",borderRadius:12,padding:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontWeight:700,fontSize:14,color:"#5b21b6"}}>{fmtNum(total)} afiliadas selecionadas</div></div>
-          <button onClick={()=>setStep(1)} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",fontWeight:600,fontSize:13,cursor:"pointer"}}>Próximo →</button>
+        <div style={{marginBottom:12}}><div style={{fontSize:11,color:"#64748b",fontWeight:600,marginBottom:4}}>Retorno</div>
+          <div style={{display:"flex",gap:8}}>
+            {retornoOpts.map(r=><button key={r.v} onClick={()=>setForm(f=>({...f,retorno:r.v}))} style={{flex:1,padding:"7px 0",border:`2px solid ${form.retorno===r.v?r.c:r.c+"40"}`,borderRadius:8,background:form.retorno===r.v?r.c+"15":"transparent",color:form.retorno===r.v?r.c:"#64748b",fontWeight:form.retorno===r.v?700:400,fontSize:12,cursor:"pointer"}}>{r.l}</button>)}
+          </div>
         </div>
+        <div style={{marginBottom:14}}><div style={{fontSize:11,color:"#64748b",fontWeight:600,marginBottom:4}}>Nota</div>
+          <input value={form.nota} onChange={e=>setForm(f=>({...f,nota:e.target.value}))} placeholder="Ex: Interessada, pediu produto de cabelo" style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
+        </div>
+        <div style={{display:"flex",gap:10}}><button onClick={()=>setShowForm(false)} style={{background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:"9px 20px",fontWeight:600,fontSize:13,cursor:"pointer"}}>Cancelar</button><button onClick={submit} style={{flex:1,background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"9px 0",fontWeight:700,fontSize:13,cursor:"pointer"}}>Salvar registro</button></div>
       </div>}
-      {step===1&&<div>
-        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:12}}>Mensagem da Campanha</div>
-        <div style={{background:"#fff",borderRadius:12,padding:20,border:"1px solid #f1f5f9",marginBottom:16}}>
-          <div style={{fontSize:12,color:"#64748b",marginBottom:8}}>Use {"{{handle}}"} para personalizar</div>
-          <textarea value={msg} onChange={e=>setMsg(e.target.value)} style={{width:"100%",height:120,borderRadius:8,border:"1px solid #e2e8f0",padding:12,fontSize:13,resize:"none",fontFamily:"inherit",color:"#334155"}}/>
-        </div>
-        <div style={{display:"flex",gap:12}}><button onClick={()=>setStep(0)} style={{background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:"10px 20px",fontWeight:600,fontSize:13,cursor:"pointer"}}>← Voltar</button><button onClick={()=>setStep(2)} style={{flex:1,background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>Próximo →</button></div>
-      </div>}
-      {step===2&&<div>
-        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:12}}>Canal de Disparo</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16,marginBottom:20}}>
-          {[{id:"tiktok",icon:"📱",label:"DM TikTok",cor:"#ff0050"},{id:"whatsapp",icon:"💬",label:"WhatsApp",cor:"#25d366"},{id:"ambos",icon:"🔀",label:"Ambos",cor:"#7c3aed"},{id:"email",icon:"📧",label:"Email",cor:"#2563eb"}].map(c=>(
-            <div key={c.id} onClick={()=>setCanal(c.id)} style={{background:"#fff",borderRadius:12,padding:20,border:`2px solid ${canal===c.id?c.cor:c.cor+"30"}`,cursor:"pointer",textAlign:"center"}}>
-              <div style={{fontSize:28,marginBottom:8}}>{c.icon}</div><div style={{fontWeight:700,fontSize:13,color:"#0f172a"}}>{c.label}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:12}}><button onClick={()=>setStep(1)} style={{background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:"10px 20px",fontWeight:600,fontSize:13,cursor:"pointer"}}>← Voltar</button><button onClick={()=>setStep(3)} style={{flex:1,background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>Revisar →</button></div>
-      </div>}
-      {step===3&&<div>
-        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>Confirmar Campanha</div>
-        <div style={{background:"#fff",borderRadius:14,padding:24,border:"1px solid #f1f5f9",marginBottom:16}}>
-          {[["Afiliadas alvo",fmtNum(total)],["Canal",canal],["Mensagem",msg.replace("{{handle}}","@afiliada").slice(0,80)+"..."]].map(([l,v])=>(
-            <div key={l} style={{display:"flex",gap:12,fontSize:13,marginBottom:16,borderBottom:"1px solid #f8fafc",paddingBottom:16}}><span style={{color:"#94a3b8",minWidth:120}}>{l}</span><span style={{color:"#334155",fontWeight:500}}>{v}</span></div>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:12}}><button onClick={()=>setStep(2)} style={{background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:"10px 20px",fontWeight:600,fontSize:13,cursor:"pointer"}}>← Voltar</button><button onClick={()=>alert(`✅ Campanha de ${fmtNum(total)} mensagens programada!`)} style={{flex:1,background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:600,fontSize:13,cursor:"pointer"}}>🚀 Disparar</button></div>
-      </div>}
+
+      {/* Lista */}
+      <div style={{background:"#fff",borderRadius:14,border:"1px solid #f1f5f9",overflow:"hidden"}}>
+        {(contacts||[]).length===0
+          ?<div style={{padding:48,textAlign:"center",color:"#94a3b8"}}><div style={{fontSize:32,marginBottom:12}}>📋</div><div>Nenhum contato registrado ainda.<br/>Clique em "+ Registrar contato" para começar.</div></div>
+          :<table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead><tr style={{background:"#f8fafc"}}>{["Afiliada","Canal","Data","Retorno","Nota"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",fontWeight:600,color:"#64748b",fontSize:11}}>{h}</th>)}</tr></thead>
+            <tbody>{[...(contacts||[])].reverse().map((c,i)=>{
+              const r=retornoOpts.find(x=>x.v===c.retorno)||retornoOpts[0];
+              return(<tr key={c.id||i} style={{borderTop:"1px solid #f8fafc"}}>
+                <td style={{padding:"10px 14px",fontWeight:600,color:"#7c3aed"}}>@{c.handle}</td>
+                <td style={{padding:"10px 14px",color:"#475569"}}>{canais.find(x=>x.v===c.canal)?.l||c.canal}</td>
+                <td style={{padding:"10px 14px",color:"#94a3b8",fontSize:12}}>{c.data}</td>
+                <td style={{padding:"10px 14px"}}><span style={{background:r.c+"20",color:r.c,fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{r.l}</span></td>
+                <td style={{padding:"10px 14px",color:"#64748b",fontSize:12,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nota||"—"}</td>
+              </tr>);
+            })}</tbody>
+          </table>
+        }
+      </div>
+      <div style={{fontSize:11,color:"#94a3b8",marginTop:10,textAlign:"center"}}>Dados salvos na sessão. Para integração com WhatsApp e persistência, conecte via n8n ou banco de dados.</div>
     </div>
   );
 }
 
 function Gamificacao({data,onSelect}){
-  const [tab,setTab]=useState("ranking");
-  const top=data.activeList.slice(0,10);
+  const {segCounts,segGMV,activeList,totalAffiliates,gmvAcumuladoTotal,totalGMV}=data;
+  const comVenda=activeList.filter(a=>a.gmv>0).length;
+  const nucleoSegs=["top","highval","reliable"];
+  const nucleoCount=nucleoSegs.reduce((s,k)=>s+(segCounts[k]||0),0);
+  const nucleoGMV=nucleoSegs.reduce((s,k)=>s+(segGMV[k]||0),0);
+  const acum=gmvAcumuladoTotal||totalGMV;
+
+  const funil=[
+    {label:"Base total cadastrada",count:totalAffiliates,gmv:0,cor:"#94a3b8",bg:"#f8fafc",desc:"Todas as afiliadas no TikTok Shop — com e sem venda"},
+    {label:"Com pelo menos 1 venda",count:comVenda,gmv:acum,cor:"#2563eb",bg:"#dbeafe",desc:"Geraram algum GMV no período — estão ativas na plataforma"},
+    {label:"Promissoras + Suporte",count:(segCounts.promising||0)+(segCounts.support||0),gmv:(segGMV.promising||0)+(segGMV.support||0),cor:"#d97706",bg:"#fef3c7",desc:"Estão vendendo mas abaixo do potencial — precisam de atenção"},
+    {label:"Confiáveis + Alto Valor",count:(segCounts.reliable||0)+(segCounts.highval||0),gmv:(segGMV.reliable||0)+(segGMV.highval||0),cor:"#7c3aed",bg:"#ede9fe",desc:"Consistentes e escalando — mantenha engajamento"},
+    {label:"Top Performers",count:segCounts.top||0,gmv:segGMV.top||0,cor:"#059669",bg:"#dcfce7",desc:"Elite — geram o maior volume de GMV da base"},
+  ];
+
+  const top10=activeList.slice(0,10);
+
   return(
     <div>
-      <div style={{marginBottom:24}}><h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>🏆 Gamificação</h1><p style={{fontSize:13,color:"#64748b",marginTop:2}}>Ranking, desafios e missões para afiliadas</p></div>
-      <div style={{display:"flex",gap:4,marginBottom:20,background:"#fff",borderRadius:10,padding:4,border:"1px solid #f1f5f9",width:"fit-content"}}>
-        {[["ranking","🏅 Ranking"],["desafios","⚡ Desafios"],["badges","🎖️ Badges"]].map(([id,l])=><button key={id} onClick={()=>setTab(id)} style={{padding:"8px 18px",border:"none",borderRadius:8,background:tab===id?"#7c3aed":"transparent",color:tab===id?"#fff":"#64748b",fontWeight:tab===id?700:400,fontSize:13,cursor:"pointer"}}>{l}</button>)}
+      <div style={{marginBottom:24}}><h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>📊 Funil de Ativação</h1><p style={{fontSize:13,color:"#64748b",marginTop:2}}>Quantas afiliadas ativadas, onde estão e quanto geram</p></div>
+
+      {/* Funil visual */}
+      <div style={{background:"#fff",borderRadius:14,padding:24,border:"1px solid #f1f5f9",marginBottom:20}}>
+        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:20}}>Funil de progressão</div>
+        {funil.map((f,i)=>{
+          const pct=funil[0].count>0?Math.round((f.count/funil[0].count)*100):0;
+          const barW=100-(i*12);
+          return(
+            <div key={f.label} style={{marginBottom:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div>
+                  <span style={{fontSize:13,fontWeight:600,color:"#0f172a"}}>{f.label}</span>
+                  <span style={{fontSize:11,color:"#94a3b8",marginLeft:8}}>{f.desc}</span>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0,marginLeft:12}}>
+                  <span style={{fontSize:14,fontWeight:800,color:f.cor}}>{fmtNum(f.count)}</span>
+                  <span style={{fontSize:11,color:"#94a3b8",marginLeft:4}}>({pct}%)</span>
+                  {f.gmv>0&&<div style={{fontSize:11,color:"#64748b"}}>{fmtBRL(f.gmv)}</div>}
+                </div>
+              </div>
+              <div style={{height:12,background:"#f1f5f9",borderRadius:6,overflow:"hidden",width:`${barW}%`}}>
+                <div style={{width:`${pct}%`,height:"100%",background:f.cor,borderRadius:6,transition:"width 0.5s"}}/>
+              </div>
+            </div>
+          );
+        })}
       </div>
-      {tab==="ranking"&&<div style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #f1f5f9",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
-        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>Top 10 GMV — Período atual</div>
-        {top.map((a,i)=>(
-          <div key={a.id} onClick={()=>onSelect(a)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:i<top.length-1?"1px solid #f8fafc":"none",cursor:"pointer",borderRadius:8}} onMouseEnter={e=>e.currentTarget.style.background="#f8fafc"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-            <div style={{fontWeight:800,fontSize:15,width:28,textAlign:"center",color:i===0?"#f59e0b":i===1?"#94a3b8":i===2?"#b45309":"#cbd5e1"}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}`}</div>
+
+      {/* KPIs de conversão */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+        {[
+          ["Taxa de ativação",comVenda>0&&totalAffiliates>0?`${Math.round((comVenda/totalAffiliates)*100)}%`:"—","afiliadas com ≥1 venda","#2563eb","#dbeafe"],
+          ["Taxa Top",nucleoCount>0&&comVenda>0?`${Math.round((nucleoCount/comVenda)*100)}%`:"—","das ativas chegaram ao Núcleo","#7c3aed","#ede9fe"],
+          ["Concentração GMV",nucleoGMV>0&&acum>0?`${Math.round((nucleoGMV/acum)*100)}%`:"—","do GMV vem do Núcleo (top+av+confiáveis)","#059669","#dcfce7"],
+        ].map(([l,v,sub,c,bg])=>(
+          <div key={l} style={{background:bg,borderRadius:12,padding:16,textAlign:"center"}}>
+            <div style={{fontSize:24,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:12,color:"#334155",fontWeight:600,marginTop:4}}>{l}</div>
+            <div style={{fontSize:10,color:"#94a3b8",marginTop:2}}>{sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Top 10 ranking */}
+      <div style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #f1f5f9"}}>
+        <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:16}}>🏆 Top 10 — GMV do período</div>
+        {top10.map((a,i)=>(
+          <div key={a.id} onClick={()=>onSelect(a)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<top10.length-1?"1px solid #f8fafc":"none",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background="#f8fafc"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div style={{fontWeight:800,fontSize:15,width:28,textAlign:"center",color:i===0?"#f59e0b":i===1?"#9ca3af":i===2?"#b45309":"#d1d5db"}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}</div>
             <Avatar initials={a.avatar} size={8}/>
-            <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:"#7c3aed",textDecoration:"underline"}}>@{a.handle}</div><div style={{fontSize:11,color:"#94a3b8"}}>{a.lives||0} lives</div></div>
-            <div style={{fontWeight:700,fontSize:14,color:"#7c3aed"}}>{fmtBRL(a.gmv)}</div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#7c3aed"}}>@{a.handle}</div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>{segInfo(a.seg).nome} · {(a.lives||0)+(a.videos||0)} conteúdos</div>
+            </div>
+            <div style={{fontWeight:700,fontSize:13,color:"#7c3aed"}}>{fmtBRL(a.gmv)}</div>
           </div>
         ))}
-      </div>}
-      {tab==="desafios"&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16}}>
-        {[{emoji:"📡",titulo:"Corrida de Lives",desc:"Realize 3 lives e alcance R$2.000 GMV",premio:"Kit exclusivo",seg:"highpot"},{emoji:"⭐",titulo:"Missão Onboarding",desc:"Faça sua primeira venda",premio:"Kit boas-vindas",seg:"new"},{emoji:"🔄",titulo:"Campanha de Volta",desc:"Reative e gere R$500 GMV",premio:"Comissão dobrada",seg:"inactive"},{emoji:"🎬",titulo:"Desafio de Conteúdo",desc:"Poste 5 vídeos com produto L'Oréal",premio:"R$500 extra",seg:"promising"}].map(d=>(
-          <div key={d.titulo} style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:32,marginBottom:10}}>{d.emoji}</div>
-            <div style={{fontWeight:700,fontSize:14,color:"#0f172a",marginBottom:6}}>{d.titulo}</div>
-            <div style={{fontSize:12,color:"#64748b",lineHeight:1.5,marginBottom:12}}>{d.desc}</div>
-            <div style={{display:"flex",gap:8,marginBottom:12}}><span style={{background:"#dcfce7",color:"#166534",fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:600}}>🎁 {d.premio}</span><span style={{background:"#f3f4f6",color:"#6b7280",fontSize:11,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{fmtNum(data.segCounts[d.seg]||0)} alvo</span></div>
-            <button style={{width:"100%",background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"9px 0",fontWeight:600,fontSize:12,cursor:"pointer"}}>Ativar desafio</button>
-          </div>
-        ))}
-      </div>}
-      {tab==="badges"&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>
-        {[{emoji:"💎",nome:"Diamante",desc:"3 meses no Top 5",cor:"#06b6d4",bg:"#cffafe"},{emoji:"🥇",nome:"Elite",desc:"GMV acima de R$50k",cor:"#f59e0b",bg:"#fef3c7"},{emoji:"🔥",nome:"Em Chamas",desc:"Crescimento +50%",cor:"#ef4444",bg:"#fee2e2"},{emoji:"📡",nome:"Live Rainha",desc:"Maior GMV em live",cor:"#8b5cf6",bg:"#ede9fe"},{emoji:"🚀",nome:"Revelação",desc:"Maior crescimento New",cor:"#22c55e",bg:"#dcfce7"},{emoji:"⭐",nome:"Fidelidade",desc:"6+ meses consecutivos",cor:"#0891b2",bg:"#cffafe"}].map(b=>(
-          <div key={b.nome} style={{background:"#fff",borderRadius:12,border:`2px solid ${b.cor}40`,padding:20,textAlign:"center"}}>
-            <div style={{fontSize:40,marginBottom:10}}>{b.emoji}</div>
-            <div style={{fontWeight:700,fontSize:13,color:"#0f172a",marginBottom:4}}>{b.nome}</div>
-            <div style={{fontSize:11,color:"#64748b",marginBottom:12,lineHeight:1.4}}>{b.desc}</div>
-            <div style={{background:b.bg,borderRadius:20,padding:"3px 10px",display:"inline-block"}}><span style={{fontSize:10,fontWeight:700,color:b.cor}}>@{top[0]?.handle||"—"}</span></div>
-          </div>
-        ))}
-      </div>}
+      </div>
     </div>
   );
 }
@@ -1398,8 +1542,12 @@ function App(){
   const [liveStatus,setLiveStatus]=useState("embedded");
   const [selAfil,setSelAfil]=useState(null);
   const [showChat,setShowChat]=useState(false);
+  const [crmMap,setCrmMap]=useState({});
+  const [contacts,setContacts]=useState([]);
   const onSelect=a=>setSelAfil(a);
   const goToSeg=key=>{setSegFilter(key);setPage("afiliadas");};
+  const updateCRM=(handle,fields)=>setCrmMap(m=>({...m,[handle]:{...(m[handle]||{}),...fields}}));
+  const addContact=c=>setContacts(cs=>[...cs,{...c,id:Date.now()}]);
 
   useEffect(()=>{
     setLiveStatus("loading");
@@ -1426,14 +1574,14 @@ function App(){
     afiliadas:<Afiliadas data={data} onSelect={onSelect} segFilter={segFilter} setSegFilter={setSegFilter}/>,
     segmentos:<Segmentos data={data} goToSeg={goToSeg}/>,
     descoberta:<Descoberta/>,
-    campanhas:<Campanhas data={data}/>,
+    campanhas:<Campanhas data={data} contacts={contacts} addContact={addContact}/>,
     gamificacao:<Gamificacao data={data} onSelect={onSelect}/>,
     guia:<GuiaDeScore/>,
   };
 
   return(
     <div style={{display:"flex",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",background:"#f8fafc",minHeight:"100vh"}}>
-      {selAfil&&<AfiliadaPanel a={selAfil} onClose={()=>setSelAfil(null)}/>}
+      {selAfil&&<AfiliadaPanel a={selAfil} onClose={()=>setSelAfil(null)} crm={crmMap[selAfil.handle]||{}} onCrmUpdate={fields=>updateCRM(selAfil.handle,fields)}/>}
       {showChat&&<ChatIA data={data} onClose={()=>setShowChat(false)}/>}
       <button onClick={()=>setShowChat(s=>!s)} title="IA AffiliateOS" style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",fontSize:22,border:"none",cursor:"pointer",boxShadow:"0 4px 16px rgba(124,58,237,0.4)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",transition:"transform 0.15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.1)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>🤖</button>
       <Sidebar page={page} setPage={setPage} liveStatus={liveStatus}/>
