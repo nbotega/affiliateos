@@ -226,15 +226,22 @@ function processCSV(text) {
   const gmvMax=Math.max(...activeList.map(x=>x.gmv),1);
   const livesMax=Math.max(...activeList.map(x=>x.lives||0),1);
   activeList.forEach(a=>{a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);});
-  // Percentile thresholds
-  const scoresWS=activeList.filter(a=>a.gmv>0).map(a=>a.score).sort((x,y)=>x-y);
-  const nWS=scoresWS.length;
-  const pctWS=p=>nWS>0?(scoresWS[Math.floor(nWS*p)]??scoresWS[nWS-1]??75):75;
-  const thresholdsWS={t95:pctWS(0.95),t85:pctWS(0.85),t65:pctWS(0.65)};
-  // Re-segment and re-count with smart scores
+  // Rank-based segmentation (avoids score compression)
+  const rankedWS=[...activeList].sort((a,b)=>b.score-a.score);
+  const NWS=rankedWS.length;
   Object.keys(segCounts).forEach(k=>{segCounts[k]=0;segGMV[k]=0;});
+  rankedWS.forEach((a,idx)=>{
+    const rank=idx/NWS;
+    if(rank<0.05) a.seg="top";
+    else if(rank<0.15) a.seg="highval";
+    else if(rank<0.35) a.seg="reliable";
+    else if(a.followers>=100000) a.seg="highpot";
+    else if((a.lives||0)+(a.videosContent||0)>0) a.seg="promising";
+    else a.seg="support";
+  });
+  // rankedWS holds same refs as activeList — seg mutations already applied
+  // Re-segment and re-count with smart scores
   activeList.forEach(a=>{
-    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent,thresholdsWS);
     a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent,commission:a.commission});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
@@ -322,26 +329,31 @@ function buildDataFromMonths(monthResults) {
       score:0,
     });
   });
-  // Score — pass 1: calculate raw scores
+  // Score
   const gmvMax=Math.max(...allList.map(x=>x.gmv),1);
   const livesMax=Math.max(...allList.map(x=>x.lives||0),1);
   allList.forEach(a=>{a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);});
-  // Percentile thresholds (computed over affiliates with GMV > 0 only)
-  const scoresWithSales=allList.filter(a=>a.gmv>0).map(a=>a.score).sort((x,y)=>x-y);
-  const n=scoresWithSales.length;
-  const pct=p=>n>0?(scoresWithSales[Math.floor(n*p)]??scoresWithSales[n-1]??75):75;
-  const thresholds={t95:pct(0.95),t85:pct(0.85),t65:pct(0.65)};
-  // Score — pass 2: segment using percentile thresholds
+  // Rank-based segmentation: sort by score desc, assign by position index
+  // This avoids score-compression issues (many affiliates sharing same integer score)
+  const ranked=[...allList].sort((a,b)=>b.score-a.score);
+  const N=ranked.length;
   const segCounts={},segGMV={};
   SEGMENTOS.forEach(s=>{segCounts[s.key]=0;segGMV[s.key]=0;});
   let totalGMV=0,totalOrders=0,totalAffiliates=0;
-  allList.forEach(a=>{
-    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent,thresholds);
+  ranked.forEach((a,idx)=>{
+    const rank=idx/N; // 0=best, approaching 1=worst
+    if(rank<0.05) a.seg="top";
+    else if(rank<0.15) a.seg="highval";
+    else if(rank<0.35) a.seg="reliable";
+    else if(a.followers>=100000) a.seg="highpot";
+    else if((a.lives||0)+(a.videosContent||0)>0) a.seg="promising";
+    else a.seg="support";
     a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent,commission:a.commission});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
     totalGMV+=a.gmv; totalOrders+=a.orders; totalAffiliates++;
   });
+  // ranked holds same object references as allList — seg/tags mutations above already applied
   allList.sort((a,b)=>b.gmv-a.gmv);
   const activeList=allList.filter(a=>a.seg!=="lost"&&a.seg!=="inactive").slice(0,500);
   // Monthly totals for dashboard chart
