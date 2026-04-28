@@ -225,12 +225,16 @@ function processCSV(text) {
   // Compute smart scores post-loop (needs global max values)
   const gmvMax=Math.max(...activeList.map(x=>x.gmv),1);
   const livesMax=Math.max(...activeList.map(x=>x.lives||0),1);
-  
+  activeList.forEach(a=>{a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);});
+  // Percentile thresholds
+  const scoresWS=activeList.filter(a=>a.gmv>0).map(a=>a.score).sort((x,y)=>x-y);
+  const nWS=scoresWS.length;
+  const pctWS=p=>nWS>0?(scoresWS[Math.floor(nWS*p)]??scoresWS[nWS-1]??75):75;
+  const thresholdsWS={t95:pctWS(0.95),t85:pctWS(0.85),t65:pctWS(0.65)};
   // Re-segment and re-count with smart scores
   Object.keys(segCounts).forEach(k=>{segCounts[k]=0;segGMV[k]=0;});
   activeList.forEach(a=>{
-    a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);
-    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent);
+    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent,thresholdsWS);
     a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent,commission:a.commission});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
@@ -318,15 +322,21 @@ function buildDataFromMonths(monthResults) {
       score:0,
     });
   });
-  // Score
+  // Score — pass 1: calculate raw scores
   const gmvMax=Math.max(...allList.map(x=>x.gmv),1);
   const livesMax=Math.max(...allList.map(x=>x.lives||0),1);
+  allList.forEach(a=>{a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);});
+  // Percentile thresholds (computed over affiliates with GMV > 0 only)
+  const scoresWithSales=allList.filter(a=>a.gmv>0).map(a=>a.score).sort((x,y)=>x-y);
+  const n=scoresWithSales.length;
+  const pct=p=>n>0?(scoresWithSales[Math.floor(n*p)]??scoresWithSales[n-1]??75):75;
+  const thresholds={t95:pct(0.95),t85:pct(0.85),t65:pct(0.65)};
+  // Score — pass 2: segment using percentile thresholds
   const segCounts={},segGMV={};
   SEGMENTOS.forEach(s=>{segCounts[s.key]=0;segGMV[s.key]=0;});
   let totalGMV=0,totalOrders=0,totalAffiliates=0;
   allList.forEach(a=>{
-    a.score=calcScore(a.gmv,a.lives,a.videosContent,gmvMax,livesMax);
-    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent);
+    a.seg=segmentarScore(a.score,a.gmv,a.followers,a.lives,a.videosContent,thresholds);
     a.tags=autoTags({followers:a.followers,gmv:a.gmv,gmvLive:a.gmvLive,gmvVideo:a.gmvVideo,lives:a.lives,videos:a.videosContent,commission:a.commission});
     segCounts[a.seg]=(segCounts[a.seg]||0)+1;
     segGMV[a.seg]=(segGMV[a.seg]||0)+a.gmv;
@@ -346,15 +356,15 @@ function buildDataFromMonths(monthResults) {
 
 // ─── SCORING INTELIGENTE ─────────────────────────────────────────────────────
 const SEG_TOOLTIPS = {
-  top:      "Score 75-100 · GMV alto + conteúdo consistente + excelente GMV/conteúdo. Prioridade máxima da gestão.",
-  highval:  "Score 55-74 · GMV sólido com boa produção. A um passo do Top — acelere com incentivos exclusivos.",
-  reliable: "Score 35-54 · Constante e confiável. Aumente frequência de conteúdo para subir de nível.",
-  highpot:  "Grande audiência (200k+ seguidores) com baixa conversão. Alto potencial inexplorado — apoie com estratégia de conteúdo.",
-  promising:"Score 20-34 e ativa. Crescendo. Missões simples e primeiro incentivo para decolar.",
-  support:  "GMV positivo mas abaixo do potencial. Intervenção humana pode recuperar a performance.",
-  new:      "Recém chegada ou primeiros conteúdos. Foco em onboarding e primeira venda.",
-  atrisk:   "Grande audiência mas sem conversão recente. Risco de abandono — reengaje urgente.",
-  inactive: "Sem atividade no período. Candidata a campanha de reativação automática (bot).",
+  top:      "Top 5% da base com venda — performance de referência. GMV consistente e alto volume de conteúdo. Prioridade máxima da gestão.",
+  highval:  "Top 5–15% da base com venda — GMV sólido e boa produção. A um passo do Top. Acelere com incentivos exclusivos.",
+  reliable: "Top 15–35% da base com venda — constante e confiável. Excelente base para campanhas recorrentes. Aumente frequência de conteúdo para subir de nível.",
+  highpot:  "Grande audiência (100k+ seguidores) com GMV ainda baixo relativo à audiência. Potencial inexplorado — apoie com estratégia de conteúdo.",
+  promising:"Ativa (tem lives ou vídeos) e com venda, mas ainda abaixo do percentil 65. Crescendo. Missões simples e primeiro incentivo para decolar.",
+  support:  "Tem GMV mas sem atividade recente de conteúdo. Intervenção humana pode recuperar a performance.",
+  new:      "Sem GMV e sem audiência expressiva — recém chegada. Foco em onboarding e primeira venda.",
+  atrisk:   "Grande audiência (100k+) mas sem venda ainda. Risco de abandono — reengaje urgente.",
+  inactive: "Sem atividade no período. Candidata a campanha de reativação automática.",
   lost:     "Sem GMV e sem atividade. Fora da gestão ativa por ora.",
 };
 
@@ -370,17 +380,23 @@ function calcScore(gmv, lives, videosContent, gmvMax, livesMax) {
   return Math.round(gmvScore*0.75 + actScore*0.25);
 }
 
-function segmentarScore(score, gmv, followers, lives, videos) {
+function segmentarScore(score, gmv, followers, lives, videos, thresholds) {
+  // thresholds = {t95, t85, t65} — percentile cutoffs computed from the full distribution
+  // Falls back to reasonable absolutes when called without thresholds (e.g. single-month path)
+  const t = thresholds || {t95:75, t85:55, t65:35};
   const content=(lives||0)+(videos||0);
   const active=content>0;
-  if(score>=75) return "top";
-  if(score>=55) return "highval";
-  if(score>=35) return "reliable";
-  if(followers>=200000&&score<35) return "highpot";
-  if(score>=20&&active) return "promising";
-  if(gmv>0&&active&&score<20) return "support";
-  if(gmv===0&&active&&followers>=50000) return "atrisk";
-  if(active) return "new";
+  if(gmv>0){
+    if(score>=t.t95) return "top";
+    if(score>=t.t85) return "highval";
+    if(score>=t.t65) return "reliable";
+    if(followers>=100000) return "highpot"; // grande audiência, baixa conversão relativa
+    if(active) return "promising";
+    return "support";
+  }
+  // sem venda
+  if(followers>=100000) return "highpot";
+  if(active) return "atrisk";
   if(followers>=10000) return "inactive";
   return "lost";
 }
