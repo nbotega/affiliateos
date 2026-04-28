@@ -1290,24 +1290,33 @@ Afiliadas além das top 20: use os dados de segmento e totais acima para respond
 }
 
 // Chama Gemini Flash diretamente do browser
-async function callGemini(question, data, apiKey){
+async function callClaude(question, data, apiKey){
   const ctx=buildContext(data);
-  const systemPrompt=`Você é a IA de inteligência de afiliadas da L'Oréal Brasil no TikTok Shop. Responda em português brasileiro, de forma direta e acionável. Use os dados abaixo para embasar suas respostas. Seja específica: cite handles, números, segmentos. Quando sugerir ação, seja concreta (ex: "mande kit de produto", "proponha live exclusiva"). Máximo 200 palavras por resposta.
+  const systemPrompt=`Você é a IA de inteligência de afiliadas da L'Oréal Brasil no TikTok Shop. Responda em português brasileiro, de forma direta e acionável. Use os dados abaixo para embasar suas respostas. Seja específica: cite handles, números, segmentos. Quando sugerir ação, seja concreta (ex: "mande kit de produto", "proponha live exclusiva"). Máximo 250 palavras por resposta.
 
 ${ctx}`;
   const body=JSON.stringify({
-    system_instruction:{parts:[{text:systemPrompt}]},
-    contents:[{role:"user",parts:[{text:question}]}],
-    generationConfig:{temperature:0.7,maxOutputTokens:400}
+    model:"claude-haiku-4-5-20251001",
+    max_tokens:600,
+    system:systemPrompt,
+    messages:[{role:"user",content:question}]
   });
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body});
+  const res=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "x-api-key":apiKey,
+      "anthropic-version":"2023-06-01",
+      "anthropic-dangerous-direct-browser-access":"true"
+    },
+    body
+  });
   if(!res.ok){
     const err=await res.json().catch(()=>({}));
     throw new Error(err?.error?.message||`HTTP ${res.status}`);
   }
   const json=await res.json();
-  return json?.candidates?.[0]?.content?.parts?.[0]?.text||"Sem resposta da IA.";
+  return json?.content?.[0]?.text||"Sem resposta da IA.";
 }
 
 // Fallback rule-based robusto
@@ -1468,7 +1477,7 @@ function ChatIA({data,onClose}){
     setApiKey(k);
     setKeyStatus("ok");
     setShowSettings(false);
-    setMsgs(m=>[...m,{role:"bot",text:"✅ Gemini conectada! Agora pode perguntar qualquer coisa livremente — os dados das afiliadas já estão no contexto."}]);
+    setMsgs(m=>[...m,{role:"bot",text:"✅ Claude conectada! Agora pode perguntar qualquer coisa livremente — os dados das afiliadas já estão no contexto."}]);
   };
 
   const send=async()=>{
@@ -1480,14 +1489,14 @@ function ChatIA({data,onClose}){
     try{
       let ans;
       if(apiKey){
-        ans=await callGemini(q,data,apiKey);
+        ans=await callClaude(q,data,apiKey);
       } else {
         await new Promise(r=>setTimeout(r,200));
         ans=queryIA(q,data);
       }
       setMsgs(m=>[...m,{role:"bot",text:ans}]);
     } catch(e){
-      setMsgs(m=>[...m,{role:"bot",text:`Erro ao chamar Gemini: ${e.message}\n\nVerifique a API Key em ⚙️ ou use sem key para respostas pré-programadas.`}]);
+      setMsgs(m=>[...m,{role:"bot",text:`Erro ao chamar Claude: ${e.message}\n\nVerifique a API Key em ⚙️ ou use sem key para respostas pré-programadas.`}]);
     }
     setLoading(false);
   };
@@ -1509,27 +1518,27 @@ function ChatIA({data,onClose}){
           <span style={{fontSize:18}}>🤖</span>
           <div>
             <div style={{color:"#fff",fontWeight:700,fontSize:14,lineHeight:1}}>IA AffiliateOS</div>
-            <div style={{color:"rgba(255,255,255,0.7)",fontSize:10,marginTop:2}}>{apiKey?"Gemini conectada ✓":"Modo regras — configure key para IA real"}</div>
+            <div style={{color:"rgba(255,255,255,0.7)",fontSize:10,marginTop:2}}>{apiKey?"Claude conectada ✓":"Modo regras — configure key para IA real"}</div>
           </div>
         </div>
         <div style={{display:"flex",gap:6}}>
-          <button onClick={()=>setShowSettings(s=>!s)} title="Configurar Gemini API Key" style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",borderRadius:6,width:30,height:30,cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
+          <button onClick={()=>setShowSettings(s=>!s)} title="Configurar Claude API Key" style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",borderRadius:6,width:30,height:30,cursor:"pointer",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",borderRadius:6,width:30,height:30,cursor:"pointer",fontSize:16,fontWeight:700}}>✕</button>
         </div>
       </div>
 
       {/* Settings panel */}
       {showSettings&&<div style={{background:"#f8fafc",borderBottom:"1px solid #e2e8f0",padding:"14px 16px",flexShrink:0}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#334155",marginBottom:6}}>Gemini API Key</div>
+        <div style={{fontSize:12,fontWeight:700,color:"#334155",marginBottom:6}}>Claude API Key</div>
         <div style={{fontSize:11,color:"#64748b",marginBottom:10,lineHeight:1.5}}>
-          Crie uma key gratuita em <strong>aistudio.google.com</strong> → "Get API Key". Cole abaixo para ativar IA real com linguagem natural.
+          Crie uma key em <strong>console.anthropic.com</strong> → "API Keys" → "Create Key". Cole abaixo para ativar Claude com linguagem natural sobre os dados das afiliadas.
         </div>
         <div style={{display:"flex",gap:6}}>
-          <input value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="AIza..." type="password" style={{flex:1,border:`1px solid ${keyStatus==="error"?"#ef4444":keyStatus==="ok"?"#22c55e":"#e2e8f0"}`,borderRadius:7,padding:"7px 10px",fontSize:12,outline:"none",fontFamily:"monospace"}}/>
+          <input value={keyInput} onChange={e=>setKeyInput(e.target.value)} placeholder="sk-ant-..." type="password" style={{flex:1,border:`1px solid ${keyStatus==="error"?"#ef4444":keyStatus==="ok"?"#22c55e":"#e2e8f0"}`,borderRadius:7,padding:"7px 10px",fontSize:12,outline:"none",fontFamily:"monospace"}}/>
           <button onClick={saveKey} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:7,padding:"7px 14px",cursor:"pointer",fontWeight:700,fontSize:12}}>Salvar</button>
         </div>
-        {keyStatus==="ok"&&<div style={{fontSize:11,color:"#16a34a",marginTop:6}}>✅ Key salva — Gemini ativada</div>}
-        {keyStatus==="error"&&<div style={{fontSize:11,color:"#dc2626",marginTop:6}}>Cole uma key válida antes de salvar</div>}
+        {keyStatus==="ok"&&<div style={{fontSize:11,color:"#16a34a",marginTop:6}}>✅ Key salva — Claude ativado</div>}
+        {keyStatus==="error"&&<div style={{fontSize:11,color:"#dc2626",marginTop:6}}>Cole uma key válida antes de salvar (começa com sk-ant-)</div>}
         {apiKey&&<div style={{fontSize:11,color:"#7c3aed",marginTop:6,cursor:"pointer"}} onClick={()=>{setApiKey("");setKeyInput("");setKeyStatus("");setMsgs(m=>[...m,{role:"bot",text:"Key removida. Voltei ao modo regras."}]);}}>🗑 Remover key atual</div>}
       </div>}
 
