@@ -50,14 +50,7 @@ const segInfo = k => SEGMENTOS.find(s=>s.key===k)||SEGMENTOS[9];
 const segCor  = k => segInfo(k).cor;
 const segBg   = k => segInfo(k).bg;
 
-const DESCOBERTA = [
-  {id:"d1",handle:"virginiafonseca",     avatar:"VF",followers:42281409,nicho:"Lifestyle/Beleza",  match:94,motivo:"42M seguidores, nunca promoveu L'Oréal.",tags:["Mega","Beleza"]},
-  {id:"d2",handle:"gkay",               avatar:"GK",followers:21000000,nicho:"Humor/Beleza",       match:81,motivo:"21M seguidores. Engajamento muito alto.",  tags:["Mega","Humor"]},
-  {id:"d3",handle:"biancaandrade",       avatar:"BA",followers:18200000,nicho:"Maquiagem",          match:97,motivo:"18M seguidores. Promove concorrentes.",    tags:["Mega","MUA"]},
-  {id:"d4",handle:"joicehasselmann",     avatar:"JH",followers:3100000, nicho:"Beleza 40+",         match:88,motivo:"Público 35-55 anos. Ideal anti-idade.",    tags:["Macro","Beleza 40+"]},
-  {id:"d5",handle:"patriciarochaoficial",avatar:"PR",followers:890000,  nicho:"Skincare",           match:85,motivo:"Alta conversão em skincare.",              tags:["Macro","Skincare"]},
-  {id:"d6",handle:"tutoriaisdemake",     avatar:"TM",followers:420000,  nicho:"Tutorial Make",      match:79,motivo:"Conteúdo educativo. Nunca teve L'Oréal.",  tags:["Macro","Tutorial"]},
-];
+// DESCOBERTA array removida — aba agora usa dormantList real dos dados da planilha
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const fmtBRL = v => {
@@ -296,16 +289,25 @@ function buildDataFromMonths(monthResults) {
   const monthShorts = monthResults.map(m=>m.short);
 
   const allList=[];
+  const dormantList=[];
   allHandles.forEach(handle=>{
     let latestFollowers=0, latestMonth=null;
     const monthData={};
+    let monthsPresent=0;
     monthResults.forEach(({label,short,map})=>{
       const d=map[handle]||null;
       monthData[label]=d;
-      if(d&&d.followers>latestFollowers) latestFollowers=d.followers;
+      if(d){monthsPresent++; if(d.followers>latestFollowers) latestFollowers=d.followers;}
       if(d&&d.gmv>0) latestMonth=d;
     });
-    if(!latestMonth) return;
+    if(!latestMonth){
+      // Cadastrada no programa mas nunca vendeu — candidata para Descoberta
+      if(latestFollowers>=5000){
+        const tags=autoTags({followers:latestFollowers,gmv:0,gmvLive:0,gmvVideo:0,lives:0,videos:0,commission:0});
+        dormantList.push({id:handle,handle,avatar:initials(handle),followers:latestFollowers,monthsPresent,tags,score:0,seg:"inactive"});
+      }
+      return;
+    }
     // Use most recent month with data as "current"
     let current=null;
     for(let i=monthLabels.length-1;i>=0;i--){
@@ -362,7 +364,8 @@ function buildDataFromMonths(monthResults) {
     gmv:Object.values(map).reduce((s,d)=>s+(d.gmv||0),0)
   }));
   const gmvAcumuladoTotal=monthlyTotals.reduce((s,m)=>s+m.gmv,0);
-  return {segCounts,segGMV,totalGMV:Math.round(totalGMV*100)/100,totalOrders,totalAffiliates,activeList,monthlyTotals,gmvAcumuladoTotal:Math.round(gmvAcumuladoTotal*100)/100};
+  dormantList.sort((a,b)=>b.followers-a.followers);
+  return {segCounts,segGMV,totalGMV:Math.round(totalGMV*100)/100,totalOrders,totalAffiliates,activeList,monthlyTotals,gmvAcumuladoTotal:Math.round(gmvAcumuladoTotal*100)/100,dormantList};
 }
 
 
@@ -949,31 +952,137 @@ function Segmentos({data,goToSeg}){
   );
 }
 
-function Descoberta(){
-  const [q,setQ]=useState("");
-  const res=q?DESCOBERTA.filter(d=>d.handle.includes(q.toLowerCase())||d.nicho.toLowerCase().includes(q.toLowerCase())):DESCOBERTA;
+function Descoberta({data,apiKey,addContact,setPage}){
+  const dormant=(data?.dormantList||[]);
+  const [search,setSearch]=useState("");
+  const [tagFilter,setTagFilter]=useState("all");
+  const [plans,setPlans]=useState({}); // handle -> {loading,text}
+
+  const tagOpts=["all","Mega","Macro","Médio","Micro"];
+  const filtered=dormant.filter(d=>{
+    const matchSearch=!search||d.handle.toLowerCase().includes(search.toLowerCase());
+    const matchTag=tagFilter==="all"||(d.tags||[]).includes(tagFilter);
+    return matchSearch&&matchTag;
+  });
+
+  const gerarPlano=async(d)=>{
+    if(!apiKey){alert("Configure a Claude API Key no chat (🤖 → ⚙️) para gerar planos.");return;}
+    setPlans(p=>({...p,[d.handle]:{loading:true,text:""}}));
+    try{
+      const sizTag=(d.tags||[]).find(t=>["Mega","Macro","Médio","Micro"].includes(t))||"Micro";
+      const prompt=`A afiliada @${d.handle} tem ${fmtNum(d.followers)} seguidores no TikTok (${sizTag}). Está cadastrada no programa de afiliadas L'Oréal Brasil no TikTok Shop há ${d.monthsPresent} mês(es) mas nunca gerou nenhuma venda. Tags: ${(d.tags||[]).join(", ")}.
+
+Gere um plano de ativação em exatamente 3 ações concretas e curtas. Formato:
+1. [ação imediata — o que fazer hoje]
+2. [ação de conteúdo — que tipo de vídeo/live gravar]
+3. [incentivo — o que oferecer para motivar a primeira venda]
+
+Seja direto, específico e acionável. Máximo 120 palavras no total.`;
+      const body=JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:300,system:"Você é especialista em ativação de afiliadas TikTok Shop para L'Oréal Brasil. Responda em português brasileiro.",messages:[{role:"user",content:prompt}]});
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body});
+      const json=await res.json();
+      const text=json?.content?.[0]?.text||"Sem resposta.";
+      setPlans(p=>({...p,[d.handle]:{loading:false,text}}));
+    } catch(e){
+      setPlans(p=>({...p,[d.handle]:{loading:false,text:`Erro: ${e.message}`}}));
+    }
+  };
+
+  const registrarContato=(handle)=>{
+    addContact&&addContact({handle,canal:"tiktok",retorno:"pendente",nota:"Abordagem via Descoberta",data:new Date().toLocaleDateString("pt-BR")});
+    setPage&&setPage("campanhas");
+  };
+
   return(
     <div>
-      <div style={{marginBottom:24}}><h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>🔍 Descoberta</h1><p style={{fontSize:13,color:"#64748b",marginTop:2}}>Criadores que nunca promoveram L'Oréal · Sugestões via IA</p></div>
-      <div style={{background:"linear-gradient(135deg,#7c3aed,#4f46e5)",borderRadius:16,padding:24,marginBottom:24,color:"#fff"}}>
-        <div style={{fontWeight:700,fontSize:16,marginBottom:8}}>✨ IA Magic Search</div>
-        <div style={{fontSize:13,opacity:0.85,marginBottom:16}}>Descreva o perfil ideal e a IA encontra as melhores criadores para L'Oréal</div>
-        <div style={{display:"flex",gap:10}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder='Ex: "Micro influencer de skincare, 35+, não vende concorrente"' style={{flex:1,border:"none",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#334155",outline:"none"}}/><button style={{background:"#fff",color:"#7c3aed",border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:13,cursor:"pointer"}}>🔍 Buscar</button></div>
+      {/* Header */}
+      <div style={{marginBottom:20}}>
+        <h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>🔍 Descoberta</h1>
+        <p style={{fontSize:13,color:"#64748b",marginTop:2}}>Afiliadas cadastradas no TikTok Shop L'Oréal que nunca geraram venda · {fmtNum(dormant.length)} candidatas</p>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16}}>
-        {res.map(d=>(
-          <div key={d.id} style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #f1f5f9",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
-            <div style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:12}}>
-              <Avatar initials={d.avatar} size={10}/>
-              <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:"#0f172a"}}>@{d.handle}</div><div style={{fontSize:12,color:"#64748b"}}>{d.nicho}</div><div style={{fontSize:12,color:"#94a3b8"}}>{fmtNum(d.followers)} seg.</div></div>
-              <div style={{background:d.match>=90?"#dcfce7":"#dbeafe",borderRadius:8,padding:"4px 10px",textAlign:"center"}}><div style={{fontWeight:800,fontSize:14,color:d.match>=90?"#166534":"#1e40af"}}>{d.match}%</div><div style={{fontSize:9,color:"#94a3b8"}}>match</div></div>
-            </div>
-            <div style={{fontSize:12,color:"#64748b",lineHeight:1.5,marginBottom:12}}>{d.motivo}</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>{d.tags.map(t=><span key={t} style={{background:"#f1f5f9",color:"#475569",fontSize:11,padding:"2px 8px",borderRadius:10}}>{t}</span>)}</div>
-            <div style={{display:"flex",gap:8}}><button style={{flex:1,background:"#7c3aed",color:"#fff",border:"none",borderRadius:7,padding:"8px 0",fontWeight:600,fontSize:12,cursor:"pointer"}}>Convidar</button><button style={{flex:1,background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:7,padding:"8px 0",fontWeight:600,fontSize:12,cursor:"pointer"}}>Analisar</button></div>
+
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+        {[
+          ["Cadastradas sem venda",fmtNum(dormant.length),"😴","#7c3aed","#ede9fe"],
+          ["Macro ou Mega",fmtNum(dormant.filter(d=>(d.tags||[]).some(t=>["Macro","Mega"].includes(t))).length),"⭐","#d97706","#fef3c7"],
+          ["Potencial de alcance",fmtNum(dormant.reduce((s,d)=>s+(d.followers||0),0))+"","👥","#2563eb","#dbeafe"],
+        ].map(([l,v,e,c,bg])=>(
+          <div key={l} style={{background:bg,borderRadius:12,padding:16,textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:11,color:"#64748b",marginTop:4}}>{e} {l}</div>
           </div>
         ))}
       </div>
+
+      {/* Filtros */}
+      <div style={{display:"flex",gap:10,marginBottom:20}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar handle..." style={{flex:1,border:"1px solid #e2e8f0",borderRadius:8,padding:"9px 14px",fontSize:13,color:"#334155",outline:"none"}}/>
+        <div style={{display:"flex",gap:6}}>
+          {tagOpts.map(t=>(
+            <button key={t} onClick={()=>setTagFilter(t)} style={{padding:"7px 14px",border:`1px solid ${tagFilter===t?"#7c3aed":"#e2e8f0"}`,borderRadius:8,background:tagFilter===t?"#7c3aed":"#fff",color:tagFilter===t?"#fff":"#64748b",fontWeight:tagFilter===t?700:400,fontSize:12,cursor:"pointer"}}>
+              {t==="all"?"Todas":t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Cards */}
+      {filtered.length===0?(
+        <div style={{textAlign:"center",padding:60,color:"#94a3b8"}}>
+          <div style={{fontSize:40,marginBottom:12}}>🎉</div>
+          <div style={{fontWeight:600}}>Nenhuma afiliada dormante nesse filtro.</div>
+          <div style={{fontSize:12,marginTop:6}}>Todas as afiliadas dessa categoria já geraram pelo menos uma venda!</div>
+        </div>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16}}>
+          {filtered.slice(0,50).map(d=>{
+            const plan=plans[d.handle];
+            const sizTag=(d.tags||[]).find(t=>["Mega","Macro","Médio","Micro"].includes(t));
+            return(
+              <div key={d.handle} style={{background:"#fff",borderRadius:14,padding:20,border:"1px solid #f1f5f9",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
+                {/* Topo */}
+                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:12}}>
+                  <Avatar initials={d.avatar} size={10}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:14,color:"#0f172a"}}>@{d.handle}</div>
+                    <div style={{fontSize:12,color:"#94a3b8"}}>{fmtNum(d.followers)} seguidores · {d.monthsPresent} {d.monthsPresent===1?"mês":"meses"} no programa</div>
+                  </div>
+                  {sizTag&&<span style={{background:sizTag==="Mega"?"#7c3aed20":sizTag==="Macro"?"#2563eb20":"#f1f5f9",color:sizTag==="Mega"?"#7c3aed":sizTag==="Macro"?"#2563eb":"#475569",fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:8}}>{sizTag}</span>}
+                </div>
+
+                {/* Tags */}
+                <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:12}}>
+                  {(d.tags||[]).map(t=><span key={t} style={{background:"#f1f5f9",color:"#475569",fontSize:10,padding:"2px 7px",borderRadius:8}}>{t}</span>)}
+                  <span style={{background:"#fef3c7",color:"#92400e",fontSize:10,padding:"2px 7px",borderRadius:8,fontWeight:600}}>Nunca vendeu</span>
+                </div>
+
+                {/* Plano IA */}
+                {plan&&(
+                  <div style={{background:"#f0fdf4",borderRadius:10,padding:12,marginBottom:12,border:"1px solid #bbf7d0"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#166534",marginBottom:6}}>🤖 Plano de Ativação Claude</div>
+                    {plan.loading
+                      ?<div style={{fontSize:12,color:"#64748b"}}>Gerando plano...</div>
+                      :<div style={{fontSize:12,color:"#1e293b",lineHeight:1.6,whiteSpace:"pre-line"}}>{plan.text}</div>
+                    }
+                  </div>
+                )}
+
+                {/* Ações */}
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>gerarPlano(d)} style={{flex:1,background:plan?"#f0fdf4":"#7c3aed",color:plan?"#166534":"#fff",border:plan?"1px solid #bbf7d0":"none",borderRadius:7,padding:"8px 0",fontWeight:600,fontSize:12,cursor:"pointer"}}>
+                    {plan?.loading?"Gerando...":plan?"↻ Regerar plano":"✨ Gerar plano IA"}
+                  </button>
+                  <button onClick={()=>registrarContato(d.handle)} style={{flex:1,background:"#f1f5f9",color:"#475569",border:"none",borderRadius:7,padding:"8px 0",fontWeight:600,fontSize:12,cursor:"pointer"}}>
+                    📣 Registrar contato
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {filtered.length>50&&<div style={{textAlign:"center",padding:16,color:"#94a3b8",fontSize:12}}>Mostrando 50 de {fmtNum(filtered.length)} candidatas. Use o filtro para refinar.</div>}
     </div>
   );
 }
@@ -1457,15 +1566,16 @@ function queryIA(raw, data){
   }
 
   // fallback
-  return `Não entendi. Exemplos do que posso responder:\n• "Quem são as rising stars?"\n• "Quem devo startar campanha?"\n• "O que falo pra @[handle]?"\n• "Quanto @[handle] vende?"\n• "Quem está em risco?"\n• "Me dá um panorama da base"\n\nOu configure uma **Gemini API Key** (⚙️) para perguntas livres em linguagem natural.`;
+  return `Não entendi. Exemplos do que posso responder:\n• "Quem são as rising stars?"\n• "Quem devo startar campanha?"\n• "O que falo pra @[handle]?"\n• "Quanto @[handle] vende?"\n• "Quem está em risco?"\n• "Me dá um panorama da base"\n\nOu configure uma **Claude API Key** (⚙️) para perguntas livres em linguagem natural.`;
 }
 
-function ChatIA({data,onClose}){
-  const [msgs,setMsgs]=useState([{role:"bot",text:"Oi! Sou a IA da AffiliateOS.\n\nCom **Gemini Key** configurada (⚙️), respondo qualquer pergunta em linguagem natural usando os dados reais da base.\n\nSem key, uso respostas pré-programadas. Configure agora ou pergunte à vontade!"}]);
+function ChatIA({data,onClose,apiKeyProp,onApiKeyChange}){
+  const [msgs,setMsgs]=useState([{role:"bot",text:"Oi! Sou a IA da AffiliateOS.\n\nCom **Claude Key** configurada (⚙️), respondo qualquer pergunta em linguagem natural usando os dados reais da base.\n\nSem key, uso respostas pré-programadas. Configure agora ou pergunte à vontade!"}]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
-  const [apiKey,setApiKey]=useState("");
+  const apiKey=apiKeyProp||"";
+  const setApiKey=k=>{if(onApiKeyChange)onApiKeyChange(k);};
   const [keyInput,setKeyInput]=useState("");
   const [keyStatus,setKeyStatus]=useState(""); // "", "ok", "error"
   const endRef=useRef(null);
@@ -1581,6 +1691,7 @@ function App(){
   const [showChat,setShowChat]=useState(false);
   const [crmMap,setCrmMap]=useState({});
   const [contacts,setContacts]=useState([]);
+  const [claudeKey,setClaudeKey]=useState("");
   const onSelect=a=>setSelAfil(a);
   const goToSeg=key=>{setSegFilter(key);setPage("afiliadas");};
   const updateCRM=(handle,fields)=>setCrmMap(m=>({...m,[handle]:{...(m[handle]||{}),...fields}}));
@@ -1610,7 +1721,7 @@ function App(){
     dashboard:<Dashboard setPage={setPage} data={data} liveStatus={liveStatus} onSelect={onSelect} goToSeg={goToSeg}/>,
     afiliadas:<Afiliadas data={data} onSelect={onSelect} segFilter={segFilter} setSegFilter={setSegFilter}/>,
     segmentos:<Segmentos data={data} goToSeg={goToSeg}/>,
-    descoberta:<Descoberta/>,
+    descoberta:<Descoberta data={data} apiKey={claudeKey} addContact={addContact} setPage={setPage}/>,
     campanhas:<Campanhas data={data} contacts={contacts} addContact={addContact}/>,
     gamificacao:<Gamificacao data={data} onSelect={onSelect}/>,
     guia:<GuiaDeScore/>,
@@ -1619,7 +1730,7 @@ function App(){
   return(
     <div style={{display:"flex",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",background:"#f8fafc",minHeight:"100vh"}}>
       {selAfil&&<AfiliadaPanel a={selAfil} onClose={()=>setSelAfil(null)} crm={crmMap[selAfil.handle]||{}} onCrmUpdate={fields=>updateCRM(selAfil.handle,fields)}/>}
-      {showChat&&<ChatIA data={data} onClose={()=>setShowChat(false)}/>}
+      {showChat&&<ChatIA data={data} onClose={()=>setShowChat(false)} apiKeyProp={claudeKey} onApiKeyChange={setClaudeKey}/>}
       <button onClick={()=>setShowChat(s=>!s)} title="IA AffiliateOS" style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,#7c3aed,#4f46e5)",color:"#fff",fontSize:22,border:"none",cursor:"pointer",boxShadow:"0 4px 16px rgba(124,58,237,0.4)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",transition:"transform 0.15s"}} onMouseEnter={e=>e.currentTarget.style.transform="scale(1.1)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>🤖</button>
       <Sidebar page={page} setPage={setPage} liveStatus={liveStatus}/>
       <main style={{marginLeft:216,flex:1,padding:24,minHeight:"100vh"}}>{pages[page]}</main>
