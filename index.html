@@ -3707,10 +3707,7 @@ function ChatIA({data,onClose,apiKeyProp,onApiKeyChange}){
 
 // ─── BRAND FIT SCORE ─────────────────────────────────────────────────────────
 const DIVISOES=[
-  {label:"Lancôme",     cor:"#7c3aed",threshold:75},
-  {label:"L'Oréal Paris",cor:"#2563eb",threshold:60},
-  {label:"Maybelline",  cor:"#059669",threshold:45},
-  {label:"Garnier",     cor:"#d97706",threshold:40},
+  {label:"Lancôme",cor:"#7c3aed",threshold:75},
 ];
 
 function calcBrandFitScore(entry){
@@ -3740,7 +3737,7 @@ function calcBrandFitScore(entry){
 
 function BrandFitScoreBar({score,size=18}){
   if(score===null) return <span style={{fontSize:11,color:"#94a3b8"}}>Pendente</span>;
-  const cor=score>=75?"#7c3aed":score>=60?"#2563eb":score>=45?"#059669":score>=40?"#d97706":"#ef4444";
+  const cor=score>=75?"#7c3aed":score>=55?"#f59e0b":"#ef4444";
   return(
     <div style={{display:"flex",alignItems:"center",gap:8}}>
       <div style={{flex:1,height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
@@ -3753,27 +3750,13 @@ function BrandFitScoreBar({score,size=18}){
 
 function BrandFit({apiKey}){
   const [search,setSearch]=useState("");
-  const [fitFilter,setFitFilter]=useState("all");
-  const [divFilter,setDivFilter]=useState("all");
   const [scores,setScores]=useState({}); // handle -> {estetica,tom,historico,safety,total,aprovada,motivo,loading}
   const [page,setPage]=useState(0);
   const PAGE_SIZE=24;
 
   const filtered=BRAND_FIT_DATA.filter(d=>{
     const matchSearch=!search||d.h.toLowerCase().includes(search.toLowerCase());
-    const score=calcBrandFitScore(d);
-    const matchFit=fitFilter==="all"
-      ||(fitFilter==="sim"&&d.f==="sim")
-      ||(fitFilter==="maybe"&&d.f==="maybe")
-      ||(fitFilter==="nao"&&d.f==="nao")
-      ||(fitFilter==="pendente"&&!d.f&&!d.t);
-    const matchDiv=divFilter==="all"||(()=>{
-      const div=DIVISOES.find(x=>x.label===divFilter);
-      if(!div) return true;
-      const s=scores[d.h]?.total??score;
-      return s!==null&&s>=div.threshold;
-    })();
-    return matchSearch&&matchFit&&matchDiv;
+    return matchSearch;
   });
 
   const totalPages=Math.ceil(filtered.length/PAGE_SIZE);
@@ -3782,17 +3765,15 @@ function BrandFit({apiKey}){
   // KPIs
   const comScore=BRAND_FIT_DATA.filter(d=>calcBrandFitScore(d)!==null);
   const aprovLancôme=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=75).length;
-  const aprovLoreal=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=60).length;
 
   const analisarIA=async(d)=>{
     if(!apiKey){alert("Configure a Claude API Key no chat (🤖 → ⚙️)");return;}
     setScores(s=>({...s,[d.h]:{...s[d.h],loading:true}}));
     try{
-      const prompt=`Você é especialista em brand fitness para marcas de luxo de beleza (L'Oréal Luxo: Lancôme, YSL, Giorgio Armani Beauty). Avalie a criadora TikTok @${d.h} para brand fit com marcas de luxo de beleza.
+      const prompt=`Você é especialista em brand fitness para marcas de luxo de beleza. Avalie a criadora TikTok @${d.h} para brand fit com Lancôme (L'Oréal Luxo).
 
 Dados disponíveis:
 - Ticket Médio: ${d.t?`R$${d.t}`:"desconhecido"}
-- Avaliação manual da equipe: ${d.fn||d.f||"sem avaliação"}
 
 Avalie nas 4 dimensões (0-100 cada):
 1. Estética visual: qualidade/consistência visual do perfil, produção, feed
@@ -3800,7 +3781,7 @@ Avalie nas 4 dimensões (0-100 cada):
 3. Histórico de marcas: associações com marcas premium vs populares/polêmicas
 4. Brand safety: ausência de política, controvérsia, conteúdo adulto
 
-Use o que você sabe sobre esse criador/a ou infira pelo handle e dados disponíveis.
+Score ≥75 = aprovada para Lancôme.
 
 Responda SOMENTE com JSON válido (sem markdown):
 {"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"frase curta em português"}`;
@@ -3819,31 +3800,26 @@ Responda SOMENTE com JSON válido (sem markdown):
     <div>
       {/* Header */}
       <div style={{marginBottom:20}}>
-        <h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>💎 Brand Fit Score</h1>
-        <p style={{fontSize:13,color:"#64748b",marginTop:2}}>Mac + Too Faced · {BRAND_FIT_DATA.length} criadoras · adequação à marca L'Oréal Luxo</p>
-      </div>
-
-      {/* Calibração por divisão */}
-      <div style={{background:"#fff",borderRadius:14,padding:16,marginBottom:20,border:"1px solid #f1f5f9",boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#334155",marginBottom:12}}>Calibração por Divisão — Score mínimo para aprovação</div>
-        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-          {DIVISOES.map(d=>(
-            <div key={d.label} style={{display:"flex",alignItems:"center",gap:8,background:d.cor+"12",borderRadius:8,padding:"6px 12px",border:`1px solid ${d.cor}30`}}>
-              <span style={{fontSize:13,fontWeight:800,color:d.cor}}>{d.threshold}</span>
-              <span style={{fontSize:12,color:"#334155"}}>{d.label}</span>
-              <span style={{fontSize:11,color:"#94a3b8"}}>{BRAND_FIT_DATA.filter(x=>((scores[x.h]?.total??calcBrandFitScore(x))||0)>=d.threshold).length} aprovadas</span>
-            </div>
-          ))}
+        <h1 style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>💎 Brand Fit Score — Lancôme</h1>
+        <p style={{fontSize:13,color:"#64748b",marginTop:2}}>{BRAND_FIT_DATA.length} criadoras avaliadas para adequação à Lancôme</p>
+        <div style={{marginTop:10,background:"#f5f3ff",border:"1px solid #e9d5ff",borderRadius:10,padding:"10px 14px"}}>
+          <p style={{fontSize:12,color:"#6d28d9",margin:0,lineHeight:1.6}}>
+            <strong>O que é o Brand Fit Score?</strong> É uma pontuação de 0 a 100 calculada pela IA em 4 dimensões:
+            <strong> Estética Visual</strong> (qualidade e consistência do feed),
+            <strong> Tom & Linguagem</strong> (vocabulário aspiracional vs popular),
+            <strong> Histórico de Marcas</strong> (associações premium vs populares) e
+            <strong> Brand Safety</strong> (ausência de polêmica, política, controvérsia).
+            Score <strong>≥ 75</strong> = aprovada para Lancôme.
+          </p>
         </div>
       </div>
 
+
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:20}}>
         {[
-          ["Total analisadas",comScore.length,"📊","#7c3aed","#ede9fe"],
-          ["Fit Lancôme (≥75)",aprovLancôme,"💜","#7c3aed","#ede9fe"],
-          ["Fit L'Oréal Paris (≥60)",aprovLoreal,"💙","#2563eb","#dbeafe"],
-          ["Avaliadas pela equipe",BRAND_FIT_DATA.filter(d=>d.f).length,"✍️","#059669","#dcfce7"],
+          ["Total criadoras",BRAND_FIT_DATA.length,"📊","#7c3aed","#ede9fe"],
+          ["Aprovadas Lancôme (≥75)",aprovLancôme,"💜","#7c3aed","#ede9fe"],
         ].map(([l,v,e,c,bg])=>(
           <div key={l} style={{background:bg,borderRadius:12,padding:14,textAlign:"center"}}>
             <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
@@ -3852,20 +3828,9 @@ Responda SOMENTE com JSON válido (sem markdown):
         ))}
       </div>
 
-      {/* Filtros */}
-      <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Buscar @handle..." style={{flex:1,minWidth:180,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,outline:"none"}}/>
-        <select value={fitFilter} onChange={e=>{setFitFilter(e.target.value);setPage(0);}} style={{border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,background:"#fff",color:"#334155"}}>
-          <option value="all">Todos os fits</option>
-          <option value="sim">✅ Sim</option>
-          <option value="maybe">🟡 Maybe</option>
-          <option value="nao">❌ Não</option>
-          <option value="pendente">⏳ Pendente</option>
-        </select>
-        <select value={divFilter} onChange={e=>{setDivFilter(e.target.value);setPage(0);}} style={{border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,background:"#fff",color:"#334155"}}>
-          <option value="all">Todas as divisões</option>
-          {DIVISOES.map(d=><option key={d.label} value={d.label}>{d.label} (≥{d.threshold})</option>)}
-        </select>
+      {/* Filtro */}
+      <div style={{display:"flex",gap:10,marginBottom:16}}>
+        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Buscar @handle..." style={{flex:1,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,outline:"none"}}/>
       </div>
 
       {/* Contagem */}
@@ -3877,10 +3842,9 @@ Responda SOMENTE com JSON válido (sem markdown):
           const preliminary=calcBrandFitScore(d);
           const aiScore=scores[d.h];
           const total=aiScore?.total??preliminary;
-          const aprovada=total!==null&&total>=60;
-          const fitBadge=d.f==="sim"?{bg:"#dcfce7",color:"#166534",label:"✅ Equipe: Sim"}:d.f==="maybe"?{bg:"#fef9c3",color:"#713f12",label:"🟡 Equipe: Maybe"}:d.f==="nao"?{bg:"#fee2e2",color:"#991b1b",label:"❌ Equipe: Não"}:null;
+          const aprovada=total!==null&&total>=75;
           return(
-            <div key={d.h} style={{background:"#fff",borderRadius:14,padding:16,border:`1px solid ${total!==null&&total>=75?"#c4b5fd":total!==null&&total>=60?"#bfdbfe":"#f1f5f9"}`,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
+            <div key={d.h} style={{background:"#fff",borderRadius:14,padding:16,border:`1px solid ${aprovada?"#c4b5fd":"#f1f5f9"}`,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
               {/* Topo */}
               <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10}}>
                 <Avatar initials={(d.h[0]+(d.h[1]||"")).toUpperCase()} size={8}/>
@@ -3889,8 +3853,8 @@ Responda SOMENTE com JSON válido (sem markdown):
                   {d.t&&<div style={{fontSize:11,color:"#64748b"}}>Ticket médio R${d.t}</div>}
                 </div>
                 {total!==null&&(
-                  <div style={{textAlign:"center",background:total>=75?"#ede9fe":total>=60?"#dbeafe":total>=45?"#dcfce7":"#fee2e2",borderRadius:8,padding:"4px 8px"}}>
-                    <div style={{fontSize:16,fontWeight:800,color:total>=75?"#7c3aed":total>=60?"#2563eb":total>=45?"#059669":"#dc2626"}}>{total}</div>
+                  <div style={{textAlign:"center",background:total>=75?"#ede9fe":total>=55?"#fef9c3":"#fee2e2",borderRadius:8,padding:"4px 8px"}}>
+                    <div style={{fontSize:16,fontWeight:800,color:total>=75?"#7c3aed":total>=55?"#d97706":"#dc2626"}}>{total}</div>
                     <div style={{fontSize:9,color:"#94a3b8"}}>score</div>
                   </div>
                 )}
@@ -3918,9 +3882,6 @@ Responda SOMENTE com JSON válido (sem markdown):
               )}
               {aiScore?.error&&<div style={{fontSize:10,color:"#ef4444",marginBottom:8}}>{aiScore.error}</div>}
 
-              {/* Badge equipe */}
-              {fitBadge&&<div style={{background:fitBadge.bg,color:fitBadge.color,fontSize:10,padding:"2px 8px",borderRadius:8,marginBottom:8,display:"inline-block"}}>{fitBadge.label}</div>}
-              {d.fn&&<div style={{fontSize:10,color:"#94a3b8",marginBottom:8,fontStyle:"italic"}}>📝 "{d.fn}"</div>}
 
               {/* Divisões aprovadas */}
               {total!==null&&(
