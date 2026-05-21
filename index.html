@@ -53,16 +53,16 @@ const segBg   = k => segInfo(k).bg;
 // DESCOBERTA array removida — aba agora usa dormantList real dos dados da planilha
 
 const BRAND_FIT_DATA=[
-{h:"alinemellods",t:219,f:"sim"},
+{h:"alinemellods",t:219,f:"sim",s:95},
 {h:"brenda.theblushlab",t:206,f:"nao",fn:"não - vende perfume paralelo"},
-{h:"pattylazzarotto",t:150,f:"maybe"},
-{h:"schneidermajuu",t:135,f:"nao",fn:"não - tem craft mas vende shein"},
-{h:"giovannaherrmannn",t:124,f:"sim"},
+{h:"pattylazzarotto",t:150,f:"maybe",s:93},
+{h:"schneidermajuu",t:135,s:95},
+{h:"giovannaherrmannn",t:124,f:"sim",s:93},
 {h:"leticiacarvalhss",t:231,f:"nao"},
 {h:"toofacedstorebrasil",t:163,f:"nao",fn:"kkk não"},
 {h:"fer.malheiros",t:234,f:"nao"},
 {h:"lannarch",t:210,f:"nao"},
-{h:"estefanibarbosa_makeup",t:237,f:"maybe",fn:"sim se precisar"},
+{h:"estefanibarbosa_makeup",t:237,s:92},
 {h:"gabrielahenrique37",t:213,f:"nao"},
 {h:"nathallescholz",t:250,f:"maybe",fn:"ainda não"},
 {h:"kakaulopesensina",t:170,f:"nao"},
@@ -71,7 +71,7 @@ const BRAND_FIT_DATA=[
 {h:"fehcampeao",t:224,f:"nao"},
 {h:"yascorse",t:230,f:"nao"},
 {h:"thaisfrohe",t:163,fn:"mudou de @"},
-{h:"naylasaab",t:226,f:"sim"},
+{h:"naylasaab",t:226,f:"sim",s:95},
 {h:"__larisoares",t:89,f:"nao"},
 {h:"joicysantossi",t:87,f:"nao"},
 {h:"borbamadu",t:202,f:"nao"},
@@ -84,7 +84,7 @@ const BRAND_FIT_DATA=[
 {h:"carolina_perfeito",t:249,f:"nao"},
 {h:"edsonjunior1122",t:139,f:"nao"},
 {h:"renatasouza_shopcreator",t:221,f:"nao"},
-{h:"lauramendoncatips",t:219,f:"maybe"},
+{h:"lauramendoncatips",t:219,s:95},
 {h:"garimpodamarina",t:215,f:"nao"},
 {h:"monickandrezzaa",t:269,f:"nao"},
 {h:"kalitacolim",t:266,f:"nao"},
@@ -105,18 +105,18 @@ const BRAND_FIT_DATA=[
 {h:"isabelanicoletto",t:129,f:"nao"},
 {h:"anvxss",t:122,f:"nao",fn:"não mesmo"},
 {h:"loianemakeup",t:239,f:"nao"},
-{h:"karenbachini",t:229,f:"maybe",fn:"sim ne mas assim.... kkkkkkk"},
+{h:"karenbachini",t:229,s:95},
 {h:"quelbritobeauty",t:226,f:"nao"},
 {h:"diycomkekeu",t:89,f:"nao"},
 {h:"kaka_dnv",t:219,f:"nao"},
 {h:"vcpieroni",t:213,f:"nao"},
 {h:"thamires.ferreirafl",t:139,f:"nao",fn:"não - divulga we pink"},
-{h:"andreiagomes.oficial",t:415,f:"nao"},
+{h:"andreiagomes.oficial",t:415,s:95},
 {h:"rafa.shopcreator",t:206,f:"nao"},
 {h:"supervulgar",t:129,f:"nao"},
 {h:"jessicaaguiards",t:187,f:"nao"},
 {h:"samiaraquelteles",t:124,f:"nao"},
-{h:"luisacamposfonseca",t:117,f:"sim"},
+{h:"luisacamposfonseca",t:117,f:"sim",s:91},
 {h:"renatatreis",t:174,f:"nao"},
 {h:"camilafolettob",t:339,f:"sim"},
 {h:"redchaves",t:139,f:"sim"},
@@ -2071,7 +2071,15 @@ const BRAND_FIT_DATA=[
 {h:"_nlfernanda"},
 {h:"camilamanfra_creator"},
 {h:"__athalitafernandes"},
-{h:"_letstar"}
+{h:"_letstar"},
+{h:"camilafoletto",s:95},
+{h:"marianaquintao",s:95},
+{h:"amandapinheiro",s:95},
+{h:"caroltanakadaily",s:95},
+{h:"redchaves",s:95},
+{h:"jessicaguiar",s:95},
+{h:"monize",s:95},
+{h:"paloma",s:95}
 ];
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -3711,6 +3719,7 @@ const DIVISOES=[
 ];
 
 function calcBrandFitScore(entry){
+  if(entry.s!=null) return entry.s; // score manual pré-definido
   const {f,t}=entry;
   let base=null;
   if(f==="sim") base=85;
@@ -3922,7 +3931,7 @@ function App(){
   const [showChat,setShowChat]=useState(false);
   const [crmMap,setCrmMap]=useState({});
   const [contacts,setContacts]=useState([]);
-  const [claudeKey,setClaudeKey]=useState("");
+  const [claudeKey,setClaudeKey]=useState("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");
   const onSelect=a=>setSelAfil(a);
   const goToSeg=key=>{setSegFilter(key);setPage("afiliadas");};
   const updateCRM=(handle,fields)=>setCrmMap(m=>({...m,[handle]:{...(m[handle]||{}),...fields}}));
