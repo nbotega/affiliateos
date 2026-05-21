@@ -3877,7 +3877,7 @@ Diretrizes de pontuação do score total:
 Âncora de calibração obrigatória: uma criadora com estética glamourosa de maquiagem de alto impacto, ticket acima de R$200 e histórico limpo DEVE pontuar entre 83-90. O parâmetro de aprovação para Lancôme Brasil é adequação ao universo beleza premium brasileiro — não exigimos o mesmo padrão de uma conta européia. Tom caloroso e acessível de criadoras brasileiras NÃO é penalidade. Penalize apenas: histórico de polêmica, nicho incompatível com beleza, ou estética visivelmente desorganizada/de baixa produção.
 
 Responda SOMENTE com JSON válido (sem markdown):
-{"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"frase curta em português explicando o score"}`;
+{"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"se aprovada: frase curta destacando o ponto forte. Se reprovada (total<75): comece com 'Reprovada — ' e explique objetivamente o motivo principal da reprovação (ex: posicionamento muito popular, ticket baixo, histórico com ruídos, nicho incompatível)."}`;
       const body=JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:300,system:"Responda apenas com JSON válido, sem explicações, sem markdown.",messages:[{role:"user",content:prompt}]});
       const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body});
       const json=await res.json();
