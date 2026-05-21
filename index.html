@@ -3789,17 +3789,29 @@ async function fetchTikTokProfile(handle){
 
 function BrandFit({apiKey}){
   const [search,setSearch]=useState("");
+  const [sortBy,setSortBy]=useState("score-desc");
   const [scores,setScores]=useState({}); // handle -> {estetica,tom,historico,safety,total,aprovada,motivo,loading,loadingMsg}
   const [page,setPage]=useState(0);
   const PAGE_SIZE=24;
 
+  const getScore=d=>scores[d.h]?.total??calcBrandFitScore(d)??-1;
+
   const filtered=BRAND_FIT_DATA.filter(d=>{
-    const matchSearch=!search||d.h.toLowerCase().includes(search.toLowerCase());
-    return matchSearch;
+    return !search||d.h.toLowerCase().includes(search.toLowerCase());
   });
 
-  const totalPages=Math.ceil(filtered.length/PAGE_SIZE);
-  const paged=filtered.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
+  const sorted=[...filtered].sort((a,b)=>{
+    if(sortBy==="score-desc") return getScore(b)-getScore(a);
+    if(sortBy==="score-asc") return getScore(a)-getScore(b);
+    if(sortBy==="ticket-desc") return (b.t||0)-(a.t||0);
+    if(sortBy==="ticket-asc") return (a.t||0)-(b.t||0);
+    if(sortBy==="alpha") return a.h.localeCompare(b.h);
+    if(sortBy==="aprovadas") return (getScore(b)>=75?1:0)-(getScore(a)>=75?1:0);
+    return 0;
+  });
+
+  const totalPages=Math.ceil(sorted.length/PAGE_SIZE);
+  const paged=sorted.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
 
   // KPIs
   const comScore=BRAND_FIT_DATA.filter(d=>calcBrandFitScore(d)!==null);
@@ -3807,32 +3819,23 @@ function BrandFit({apiKey}){
 
   const analisarIA=async(d)=>{
     if(!apiKey){alert("Configure a Claude API Key nas configurações (⚙️)");return;}
-    setScores(s=>({...s,[d.h]:{...s[d.h],loading:true,loadingMsg:"🔍 Buscando perfil no TikTok..."}}));
+    setScores(s=>({...s,[d.h]:{...s[d.h],loading:true,loadingMsg:"🔍 Buscando perfil..."}}));
 
-    let profileInfo="Dados do perfil não disponíveis (Apify não retornou)";
+    // Tenta Apify com timeout de 25s — se falhar, segue sem dados de perfil
+    let profileInfo="";
     try{
-      const profile=await fetchTikTokProfile(d.h);
+      const timeout=new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),25000));
+      const profile=await Promise.race([fetchTikTokProfile(d.h),timeout]);
       if(profile){
-        const seguidores=profile.followersCount??profile.fans??null;
-        const curtidas=profile.heartCount??profile.heart??null;
-        const videos=profile.videoCount??null;
+        const seg=profile.followersCount??profile.fans??null;
+        const likes=profile.heartCount??profile.heart??null;
+        const vids=profile.videoCount??null;
         const bio=profile.signature??profile.bioLink??"";
-        const verificada=profile.verified?"Sim":"Não";
-        const engRate=seguidores&&curtidas?((curtidas/Math.max(videos||1,1))/seguidores*100).toFixed(1):"N/A";
-        profileInfo=`
-- Seguidores: ${seguidores?.toLocaleString("pt-BR")||"N/A"}
-- Curtidas totais: ${curtidas?.toLocaleString("pt-BR")||"N/A"}
-- Vídeos publicados: ${videos||"N/A"}
-- Eng. rate estimado: ${engRate}%
-- Bio: "${bio||"sem bio"}"
-- Conta verificada: ${verificada}
-- Nickname: ${profile.nickname||profile.authorMeta?.name||d.h}`.trim();
+        profileInfo=`Seguidores: ${seg?.toLocaleString("pt-BR")||"N/A"} | Curtidas: ${likes?.toLocaleString("pt-BR")||"N/A"} | Vídeos: ${vids||"N/A"} | Bio: "${bio||"sem bio"}" | Verificada: ${profile.verified?"Sim":"Não"}`;
       }
-    } catch(apifyErr){
-      profileInfo=`Dados do Apify indisponíveis (${apifyErr.message}) — usando apenas ticket médio`;
-    }
+    } catch(_){}
 
-    setScores(s=>({...s,[d.h]:{...s[d.h],loadingMsg:"🤖 Analisando com Claude..."}}));
+    setScores(s=>({...s,[d.h]:{...s[d.h],loadingMsg:"🤖 Analisando..."}}));
     try{
       const prompt=`Você é especialista em brand fitness para marcas de luxo de beleza. Avalie a criadora TikTok @${d.h} para brand fit com Lancôme (L'Oréal Luxo).
 
@@ -3893,13 +3896,21 @@ Responda SOMENTE com JSON válido (sem markdown):
         ))}
       </div>
 
-      {/* Filtro */}
-      <div style={{display:"flex",gap:10,marginBottom:16}}>
-        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Buscar @handle..." style={{flex:1,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,outline:"none"}}/>
+      {/* Filtro + Ordenação */}
+      <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="Buscar @handle..." style={{flex:2,minWidth:160,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,outline:"none"}}/>
+        <select value={sortBy} onChange={e=>{setSortBy(e.target.value);setPage(0);}} style={{flex:1,minWidth:180,border:"1px solid #e2e8f0",borderRadius:8,padding:"8px 12px",fontSize:13,background:"#fff",color:"#334155"}}>
+          <option value="score-desc">⬇ Score (maior primeiro)</option>
+          <option value="score-asc">⬆ Score (menor primeiro)</option>
+          <option value="aprovadas">💜 Aprovadas Lancôme primeiro</option>
+          <option value="ticket-desc">💰 Ticket médio (maior primeiro)</option>
+          <option value="ticket-asc">💰 Ticket médio (menor primeiro)</option>
+          <option value="alpha">🔤 Ordem alfabética</option>
+        </select>
       </div>
 
       {/* Contagem */}
-      <div style={{fontSize:12,color:"#94a3b8",marginBottom:12}}>{filtered.length} criadoras · página {page+1}/{Math.max(1,totalPages)}</div>
+      <div style={{fontSize:12,color:"#94a3b8",marginBottom:12}}>{sorted.length} criadoras · página {page+1}/{Math.max(1,totalPages)}</div>
 
       {/* Grid de cards */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
@@ -3914,7 +3925,7 @@ Responda SOMENTE com JSON válido (sem markdown):
               <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10}}>
                 <Avatar initials={(d.h[0]+(d.h[1]||"")).toUpperCase()} size={8}/>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:13,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>@{d.h}</div>
+                  <a href={`https://www.tiktok.com/@${d.h}`} target="_blank" rel="noopener noreferrer" style={{fontWeight:700,fontSize:13,color:"#0f172a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block",textDecoration:"none"}} onMouseOver={e=>e.target.style.color="#7c3aed"} onMouseOut={e=>e.target.style.color="#0f172a"}>@{d.h} ↗</a>
                   {d.t&&<div style={{fontSize:11,color:"#64748b"}}>Ticket médio R${d.t}</div>}
                 </div>
                 {total!==null&&(
@@ -3959,7 +3970,7 @@ Responda SOMENTE com JSON válido (sem markdown):
 
               {/* Botão */}
               <button onClick={()=>analisarIA(d)} disabled={aiScore?.loading} style={{width:"100%",background:aiScore?.total!=null?"#f0fdf4":total!==null?"#f8fafc":"#7c3aed",color:aiScore?.total!=null?"#166534":total!==null?"#475569":"#fff",border:aiScore?.total!=null?"1px solid #bbf7d0":total!==null?"1px solid #e2e8f0":"none",borderRadius:7,padding:"7px 0",fontWeight:600,fontSize:11,cursor:aiScore?.loading?"wait":"pointer"}}>
-                {aiScore?.loading?(aiScore?.loadingMsg||"⏳ Analisando..."):aiScore?.total!=null?"↻ Re-analisar (Apify + IA)":"🤖 Analisar Brand Fit (Apify + IA)"}
+                {aiScore?.loading?(aiScore?.loadingMsg||"⏳ Analisando..."):aiScore?.total!=null?"↻ Re-analisar":"🤖 Analisar Brand Fit"}
               </button>
             </div>
           );
