@@ -3831,7 +3831,7 @@ Responda SOMENTE com JSON válido (sem markdown):
             <div key={d.label} style={{display:"flex",alignItems:"center",gap:8,background:d.cor+"12",borderRadius:8,padding:"6px 12px",border:`1px solid ${d.cor}30`}}>
               <span style={{fontSize:13,fontWeight:800,color:d.cor}}>{d.threshold}</span>
               <span style={{fontSize:12,color:"#334155"}}>{d.label}</span>
-              <span style={{fontSize:11,color:"#94a3b8"}}>{BRAND_FIT_DATA.filter(x=>(scores[x.h]?.total??calcBrandFitScore(x)||0)>=d.threshold).length} aprovadas</span>
+              <span style={{fontSize:11,color:"#94a3b8"}}>{BRAND_FIT_DATA.filter(x=>((scores[x.h]?.total??calcBrandFitScore(x))||0)>=d.threshold).length} aprovadas</span>
             </div>
           ))}
         </div>
