@@ -3715,7 +3715,7 @@ function ChatIA({data,onClose,apiKeyProp,onApiKeyChange}){
 
 // ─── BRAND FIT SCORE ─────────────────────────────────────────────────────────
 const DIVISOES=[
-  {label:"Lancôme",cor:"#7c3aed",threshold:65},
+  {label:"Lancôme",cor:"#7c3aed",threshold:75},
 ];
 
 function calcBrandFitScore(entry){
@@ -3746,7 +3746,7 @@ function calcBrandFitScore(entry){
 
 function BrandFitScoreBar({score,size=18}){
   if(score===null) return <span style={{fontSize:11,color:"#94a3b8"}}>Pendente</span>;
-  const cor=score>=65?"#7c3aed":score>=45?"#f59e0b":"#ef4444";
+  const cor=score>=75?"#7c3aed":score>=50?"#f59e0b":"#ef4444";
   return(
     <div style={{display:"flex",alignItems:"center",gap:8}}>
       <div style={{flex:1,height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
@@ -3823,7 +3823,7 @@ function BrandFit({apiKey}){
     if(sortBy==="ticket-desc") return (b.t||0)-(a.t||0);
     if(sortBy==="ticket-asc") return (a.t||0)-(b.t||0);
     if(sortBy==="alpha") return a.h.localeCompare(b.h);
-    if(sortBy==="aprovadas") return (getScore(b)>=65?1:0)-(getScore(a)>=65?1:0);
+    if(sortBy==="aprovadas") return (getScore(b)>=75?1:0)-(getScore(a)>=75?1:0);
     return 0;
   });
 
@@ -3832,7 +3832,7 @@ function BrandFit({apiKey}){
 
   // KPIs
   const comScore=BRAND_FIT_DATA.filter(d=>calcBrandFitScore(d)!==null);
-  const aprovLancôme=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=65).length;
+  const aprovLancôme=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=75).length;
 
   const analisarIA=async(d)=>{
     if(!apiKey){alert("Configure a Claude API Key nas configurações (⚙️)");return;}
@@ -3863,18 +3863,18 @@ ${profileInfo}
 - Ticket Médio de compras: ${d.t?`R$${d.t}`:"desconhecido"}
 
 Avalie nas 4 dimensões (0-100 cada):
-1. Estética visual: qualidade/consistência visual do perfil, produção, feed, identidade
-2. Tom e linguagem: vocabulário aspiracional vs popular, presença de gírias, polêmica
-3. Histórico de marcas: associações com marcas premium vs populares/polêmicas, parcerias passadas
-4. Brand safety: ausência de política, controvérsia, conteúdo adulto, linguagem ofensiva
+1. Estética visual: qualidade/consistência visual do perfil, produção, identidade estética. Alta produção, maquiagem de impacto, feed coeso = 85+. Feed mediocre ou desorganizado = abaixo de 70.
+2. Tom e linguagem: avalie APENAS brand safety do tom — ausência de agressividade, vulgaridade ou polarização. NÃO penalize tom caloroso/acessível típico de criadoras brasileiras. Tom engajado e próximo do público = normal e positivo = 75+. Tom polêmico, agressivo ou vulgar = abaixo de 60.
+3. Histórico de marcas: associações com marcas premium vs populares/polêmicas. Ticket alto (≥R$150) = indicador forte de parceria premium. Histórico limpo sem marcas problemáticas = 75+.
+4. Brand safety: ausência de política, controvérsia, conteúdo adulto, linguagem ofensiva. Perfil focado em beleza sem incidentes = 80+.
 
-Diretrizes de pontuação:
-- Score 80-100: criadora com estética e posicionamento premium claro, histórico limpo
-- Score 65-79: boa adequação, pode trabalhar com Lancôme com curadoria de conteúdo
-- Score 45-64: adequação parcial, precisaria de briefing rigoroso
-- Score abaixo de 45: não recomendada
+Diretrizes de pontuação do score total:
+- Score 83-100: criadora de beleza com produção visual de impacto, ticket ≥R$150, histórico limpo, público engajado com consumo premium. Aprovada sem restrições.
+- Score 75-82: boa adequação, feed de beleza consistente, histórico sem problemas. Aprovada com curadoria de briefing.
+- Score 55-74: adequação parcial — estética inconsistente, ticket muito baixo ou histórico com ruídos menores.
+- Score abaixo de 55: não recomendada — histórico problemático, nicho incompatível ou ausência de conteúdo de beleza.
 
-Seja equilibrada — considere o potencial e contexto da criadora, não só aspectos negativos. Uma criadora popular de beleza sem histórico problemático deve ter score mínimo de 60.
+Âncora de calibração obrigatória: uma criadora com estética glamourosa de maquiagem de alto impacto, ticket acima de R$200 e histórico limpo DEVE pontuar entre 83-90. O parâmetro de aprovação para Lancôme Brasil é adequação ao universo beleza premium brasileiro — não exigimos o mesmo padrão de uma conta européia. Tom caloroso e acessível de criadoras brasileiras NÃO é penalidade. Penalize apenas: histórico de polêmica, nicho incompatível com beleza, ou estética visivelmente desorganizada/de baixa produção.
 
 Responda SOMENTE com JSON válido (sem markdown):
 {"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"frase curta em português explicando o score"}`;
@@ -3902,7 +3902,7 @@ Responda SOMENTE com JSON válido (sem markdown):
             <strong> Tom & Linguagem</strong> (vocabulário aspiracional vs popular),
             <strong> Histórico de Marcas</strong> (associações premium vs populares) e
             <strong> Brand Safety</strong> (ausência de polêmica, política, controvérsia).
-            Score <strong>≥ 65</strong> = aprovada para Lancôme.
+            Score <strong>≥ 75</strong> = aprovada para Lancôme.
           </p>
         </div>
       </div>
@@ -3943,7 +3943,7 @@ Responda SOMENTE com JSON válido (sem markdown):
           const preliminary=calcBrandFitScore(d);
           const aiScore=scores[d.h];
           const total=aiScore?.total??preliminary;
-          const aprovada=total!==null&&total>=65;
+          const aprovada=total!==null&&total>=75;
           return(
             <div key={d.h} style={{background:"#fff",borderRadius:14,padding:16,border:`1px solid ${aprovada?"#c4b5fd":"#f1f5f9"}`,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
               {/* Topo */}
@@ -3954,8 +3954,8 @@ Responda SOMENTE com JSON válido (sem markdown):
                   {d.t&&<div style={{fontSize:11,color:"#64748b"}}>Ticket médio R${d.t}</div>}
                 </div>
                 {total!==null&&(
-                  <div style={{textAlign:"center",background:total>=65?"#ede9fe":total>=45?"#fef9c3":"#fee2e2",borderRadius:8,padding:"4px 8px"}}>
-                    <div style={{fontSize:16,fontWeight:800,color:total>=65?"#7c3aed":total>=45?"#d97706":"#dc2626"}}>{total}</div>
+                  <div style={{textAlign:"center",background:total>=75?"#ede9fe":total>=50?"#fef9c3":"#fee2e2",borderRadius:8,padding:"4px 8px"}}>
+                    <div style={{fontSize:16,fontWeight:800,color:total>=75?"#7c3aed":total>=50?"#d97706":"#dc2626"}}>{total}</div>
                     <div style={{fontSize:9,color:"#94a3b8"}}>score</div>
                   </div>
                 )}
