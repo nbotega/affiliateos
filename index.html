@@ -3715,38 +3715,38 @@ function ChatIA({data,onClose,apiKeyProp,onApiKeyChange}){
 
 // ─── BRAND FIT SCORE ─────────────────────────────────────────────────────────
 const DIVISOES=[
-  {label:"Lancôme",cor:"#7c3aed",threshold:75},
+  {label:"Lancôme",cor:"#7c3aed",threshold:65},
 ];
 
 function calcBrandFitScore(entry){
   if(entry.s!=null) return entry.s; // score manual pré-definido
   const {f,t}=entry;
   let base=null;
-  if(f==="sim") base=85;
-  else if(f==="maybe") base=55;
-  else if(f==="nao") base=20;
+  if(f==="sim") base=88;
+  else if(f==="maybe") base=68;
+  else if(f==="nao") base=30;
   // Ticket Médio adjustment
   let ticketAdj=0;
   if(t){
-    if(t>=200) ticketAdj=12;
-    else if(t>=150) ticketAdj=8;
-    else if(t>=100) ticketAdj=3;
-    else ticketAdj=-5;
+    if(t>=200) ticketAdj=8;
+    else if(t>=150) ticketAdj=5;
+    else if(t>=100) ticketAdj=2;
+    else ticketAdj=-3;
   }
   if(base!==null) return Math.min(100,Math.max(0,Math.round(base+ticketAdj)));
   // No annotation — ticket-only preliminary
   if(t){
-    if(t>=200) return 63;
-    if(t>=150) return 52;
-    if(t>=100) return 42;
-    return 32;
+    if(t>=200) return 68;
+    if(t>=150) return 62;
+    if(t>=100) return 55;
+    return 45;
   }
   return null; // pendente
 }
 
 function BrandFitScoreBar({score,size=18}){
   if(score===null) return <span style={{fontSize:11,color:"#94a3b8"}}>Pendente</span>;
-  const cor=score>=75?"#7c3aed":score>=55?"#f59e0b":"#ef4444";
+  const cor=score>=65?"#7c3aed":score>=45?"#f59e0b":"#ef4444";
   return(
     <div style={{display:"flex",alignItems:"center",gap:8}}>
       <div style={{flex:1,height:6,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
@@ -3823,7 +3823,7 @@ function BrandFit({apiKey}){
     if(sortBy==="ticket-desc") return (b.t||0)-(a.t||0);
     if(sortBy==="ticket-asc") return (a.t||0)-(b.t||0);
     if(sortBy==="alpha") return a.h.localeCompare(b.h);
-    if(sortBy==="aprovadas") return (getScore(b)>=75?1:0)-(getScore(a)>=75?1:0);
+    if(sortBy==="aprovadas") return (getScore(b)>=65?1:0)-(getScore(a)>=65?1:0);
     return 0;
   });
 
@@ -3832,7 +3832,7 @@ function BrandFit({apiKey}){
 
   // KPIs
   const comScore=BRAND_FIT_DATA.filter(d=>calcBrandFitScore(d)!==null);
-  const aprovLancôme=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=75).length;
+  const aprovLancôme=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=65).length;
 
   const analisarIA=async(d)=>{
     if(!apiKey){alert("Configure a Claude API Key nas configurações (⚙️)");return;}
@@ -3868,7 +3868,13 @@ Avalie nas 4 dimensões (0-100 cada):
 3. Histórico de marcas: associações com marcas premium vs populares/polêmicas, parcerias passadas
 4. Brand safety: ausência de política, controvérsia, conteúdo adulto, linguagem ofensiva
 
-Score ≥75 = aprovada para Lancôme. Seja rigoroso — Lancôme é luxo premium.
+Diretrizes de pontuação:
+- Score 80-100: criadora com estética e posicionamento premium claro, histórico limpo
+- Score 65-79: boa adequação, pode trabalhar com Lancôme com curadoria de conteúdo
+- Score 45-64: adequação parcial, precisaria de briefing rigoroso
+- Score abaixo de 45: não recomendada
+
+Seja equilibrada — considere o potencial e contexto da criadora, não só aspectos negativos. Uma criadora popular de beleza sem histórico problemático deve ter score mínimo de 60.
 
 Responda SOMENTE com JSON válido (sem markdown):
 {"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"frase curta em português explicando o score"}`;
@@ -3896,7 +3902,7 @@ Responda SOMENTE com JSON válido (sem markdown):
             <strong> Tom & Linguagem</strong> (vocabulário aspiracional vs popular),
             <strong> Histórico de Marcas</strong> (associações premium vs populares) e
             <strong> Brand Safety</strong> (ausência de polêmica, política, controvérsia).
-            Score <strong>≥ 75</strong> = aprovada para Lancôme.
+            Score <strong>≥ 65</strong> = aprovada para Lancôme.
           </p>
         </div>
       </div>
@@ -3906,7 +3912,7 @@ Responda SOMENTE com JSON válido (sem markdown):
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:20}}>
         {[
           ["Total criadoras",BRAND_FIT_DATA.length,"📊","#7c3aed","#ede9fe"],
-          ["Aprovadas Lancôme (≥75)",aprovLancôme,"💜","#7c3aed","#ede9fe"],
+          ["Aprovadas Lancôme (≥65)",aprovLancôme,"💜","#7c3aed","#ede9fe"],
         ].map(([l,v,e,c,bg])=>(
           <div key={l} style={{background:bg,borderRadius:12,padding:14,textAlign:"center"}}>
             <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
@@ -3937,7 +3943,7 @@ Responda SOMENTE com JSON válido (sem markdown):
           const preliminary=calcBrandFitScore(d);
           const aiScore=scores[d.h];
           const total=aiScore?.total??preliminary;
-          const aprovada=total!==null&&total>=75;
+          const aprovada=total!==null&&total>=65;
           return(
             <div key={d.h} style={{background:"#fff",borderRadius:14,padding:16,border:`1px solid ${aprovada?"#c4b5fd":"#f1f5f9"}`,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}}>
               {/* Topo */}
@@ -3948,8 +3954,8 @@ Responda SOMENTE com JSON válido (sem markdown):
                   {d.t&&<div style={{fontSize:11,color:"#64748b"}}>Ticket médio R${d.t}</div>}
                 </div>
                 {total!==null&&(
-                  <div style={{textAlign:"center",background:total>=75?"#ede9fe":total>=55?"#fef9c3":"#fee2e2",borderRadius:8,padding:"4px 8px"}}>
-                    <div style={{fontSize:16,fontWeight:800,color:total>=75?"#7c3aed":total>=55?"#d97706":"#dc2626"}}>{total}</div>
+                  <div style={{textAlign:"center",background:total>=65?"#ede9fe":total>=45?"#fef9c3":"#fee2e2",borderRadius:8,padding:"4px 8px"}}>
+                    <div style={{fontSize:16,fontWeight:800,color:total>=65?"#7c3aed":total>=45?"#d97706":"#dc2626"}}>{total}</div>
                     <div style={{fontSize:9,color:"#94a3b8"}}>score</div>
                   </div>
                 )}
