@@ -3757,9 +3757,39 @@ function BrandFitScoreBar({score,size=18}){
   );
 }
 
+const APIFY_KEY="apify_api_0NxhFRyCX1y3IdHXsIyKoXxmnQb7UT19XeNU";
+const APIFY_ACTOR="clockworks~tiktok-profile-scraper";
+
+async function fetchTikTokProfile(handle){
+  // Inicia run no Apify
+  const startRes=await fetch(`https://api.apify.com/v2/acts/${APIFY_ACTOR}/runs`,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":`Bearer ${APIFY_KEY}`},
+    body:JSON.stringify({profiles:[`https://www.tiktok.com/@${handle}`],shouldDownloadVideos:false,shouldDownloadCovers:false})
+  });
+  const startJson=await startRes.json();
+  const runId=startJson?.data?.id;
+  if(!runId) throw new Error("Apify: run não iniciado");
+
+  // Poll até concluir (máx 90s)
+  for(let i=0;i<18;i++){
+    await new Promise(r=>setTimeout(r,5000));
+    const statusRes=await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_KEY}`);
+    const statusJson=await statusRes.json();
+    const status=statusJson?.data?.status;
+    if(status==="SUCCEEDED"){
+      const dataRes=await fetch(`https://api.apify.com/v2/actor-runs/${runId}/dataset/items?token=${APIFY_KEY}`);
+      const items=await dataRes.json();
+      return items?.[0]||null;
+    }
+    if(["FAILED","ABORTED","TIMED-OUT"].includes(status)) throw new Error(`Apify: ${status}`);
+  }
+  throw new Error("Apify: timeout");
+}
+
 function BrandFit({apiKey}){
   const [search,setSearch]=useState("");
-  const [scores,setScores]=useState({}); // handle -> {estetica,tom,historico,safety,total,aprovada,motivo,loading}
+  const [scores,setScores]=useState({}); // handle -> {estetica,tom,historico,safety,total,aprovada,motivo,loading,loadingMsg}
   const [page,setPage]=useState(0);
   const PAGE_SIZE=24;
 
@@ -3776,32 +3806,58 @@ function BrandFit({apiKey}){
   const aprovLancôme=comScore.filter(d=>(scores[d.h]?.total??calcBrandFitScore(d))>=75).length;
 
   const analisarIA=async(d)=>{
-    if(!apiKey){alert("Configure a Claude API Key no chat (🤖 → ⚙️)");return;}
-    setScores(s=>({...s,[d.h]:{...s[d.h],loading:true}}));
+    if(!apiKey){alert("Configure a Claude API Key nas configurações (⚙️)");return;}
+    setScores(s=>({...s,[d.h]:{...s[d.h],loading:true,loadingMsg:"🔍 Buscando perfil no TikTok..."}}));
+
+    let profileInfo="Dados do perfil não disponíveis (Apify não retornou)";
+    try{
+      const profile=await fetchTikTokProfile(d.h);
+      if(profile){
+        const seguidores=profile.followersCount??profile.fans??null;
+        const curtidas=profile.heartCount??profile.heart??null;
+        const videos=profile.videoCount??null;
+        const bio=profile.signature??profile.bioLink??"";
+        const verificada=profile.verified?"Sim":"Não";
+        const engRate=seguidores&&curtidas?((curtidas/Math.max(videos||1,1))/seguidores*100).toFixed(1):"N/A";
+        profileInfo=`
+- Seguidores: ${seguidores?.toLocaleString("pt-BR")||"N/A"}
+- Curtidas totais: ${curtidas?.toLocaleString("pt-BR")||"N/A"}
+- Vídeos publicados: ${videos||"N/A"}
+- Eng. rate estimado: ${engRate}%
+- Bio: "${bio||"sem bio"}"
+- Conta verificada: ${verificada}
+- Nickname: ${profile.nickname||profile.authorMeta?.name||d.h}`.trim();
+      }
+    } catch(apifyErr){
+      profileInfo=`Dados do Apify indisponíveis (${apifyErr.message}) — usando apenas ticket médio`;
+    }
+
+    setScores(s=>({...s,[d.h]:{...s[d.h],loadingMsg:"🤖 Analisando com Claude..."}}));
     try{
       const prompt=`Você é especialista em brand fitness para marcas de luxo de beleza. Avalie a criadora TikTok @${d.h} para brand fit com Lancôme (L'Oréal Luxo).
 
-Dados disponíveis:
-- Ticket Médio: ${d.t?`R$${d.t}`:"desconhecido"}
+Dados reais do perfil:
+${profileInfo}
+- Ticket Médio de compras: ${d.t?`R$${d.t}`:"desconhecido"}
 
 Avalie nas 4 dimensões (0-100 cada):
-1. Estética visual: qualidade/consistência visual do perfil, produção, feed
+1. Estética visual: qualidade/consistência visual do perfil, produção, feed, identidade
 2. Tom e linguagem: vocabulário aspiracional vs popular, presença de gírias, polêmica
-3. Histórico de marcas: associações com marcas premium vs populares/polêmicas
-4. Brand safety: ausência de política, controvérsia, conteúdo adulto
+3. Histórico de marcas: associações com marcas premium vs populares/polêmicas, parcerias passadas
+4. Brand safety: ausência de política, controvérsia, conteúdo adulto, linguagem ofensiva
 
-Score ≥75 = aprovada para Lancôme.
+Score ≥75 = aprovada para Lancôme. Seja rigoroso — Lancôme é luxo premium.
 
 Responda SOMENTE com JSON válido (sem markdown):
-{"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"frase curta em português"}`;
-      const body=JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:200,system:"Responda apenas com JSON válido, sem explicações, sem markdown.",messages:[{role:"user",content:prompt}]});
+{"estetica":XX,"tom":XX,"historico":XX,"safety":XX,"total":XX,"aprovada":true,"motivo":"frase curta em português explicando o score"}`;
+      const body=JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:300,system:"Responda apenas com JSON válido, sem explicações, sem markdown.",messages:[{role:"user",content:prompt}]});
       const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body});
       const json=await res.json();
       const raw=json?.content?.[0]?.text||"{}";
       const parsed=JSON.parse(raw.replace(/```json?|```/g,"").trim());
-      setScores(s=>({...s,[d.h]:{...parsed,loading:false}}));
+      setScores(s=>({...s,[d.h]:{...parsed,loading:false,loadingMsg:null}}));
     } catch(e){
-      setScores(s=>({...s,[d.h]:{loading:false,error:e.message}}));
+      setScores(s=>({...s,[d.h]:{loading:false,loadingMsg:null,error:e.message}}));
     }
   };
 
@@ -3903,7 +3959,7 @@ Responda SOMENTE com JSON válido (sem markdown):
 
               {/* Botão */}
               <button onClick={()=>analisarIA(d)} disabled={aiScore?.loading} style={{width:"100%",background:aiScore?.total!=null?"#f0fdf4":total!==null?"#f8fafc":"#7c3aed",color:aiScore?.total!=null?"#166534":total!==null?"#475569":"#fff",border:aiScore?.total!=null?"1px solid #bbf7d0":total!==null?"1px solid #e2e8f0":"none",borderRadius:7,padding:"7px 0",fontWeight:600,fontSize:11,cursor:aiScore?.loading?"wait":"pointer"}}>
-                {aiScore?.loading?"Analisando...":aiScore?.total!=null?"↻ Re-analisar com IA":"🤖 Analisar Brand Fit (IA)"}
+                {aiScore?.loading?(aiScore?.loadingMsg||"⏳ Analisando..."):aiScore?.total!=null?"↻ Re-analisar (Apify + IA)":"🤖 Analisar Brand Fit (Apify + IA)"}
               </button>
             </div>
           );
